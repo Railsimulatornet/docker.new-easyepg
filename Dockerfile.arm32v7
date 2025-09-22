@@ -1,80 +1,65 @@
-FROM arm32v7/debian:bullseye-slim AS build
+# Hinweis: Keine statischen qemu-*-static Binaries ins Image kopieren; Buildx/QEMU emuliert hostseitig.
 
-LABEL maintainer="Bastian Kleinschmidt <debaschdi@googlemail.com>" \
-      org.label-schema.docker.dockerfile="/Dockerfile" \
-      org.label-schema.name="docker.new-easyepg"
+FROM debian:13-slim
 
-ARG DEPENDENCIES="git ca-certificates python3 python3-pip python3-simplejson python3-requests python3-bottle python3-xmltodict python3-bs4"
+    ENV DEBIAN_FRONTEND=noninteractive \
+        PYTHONUNBUFFERED=1
 
-ENV USER_ID="99" \
-    GROUP_ID="100" \
-    TIMEZONE="Europe/Berlin" \
-    REPO="script.service.easyepg-lite" \
-    BRANCH="main" \
-    UPDATE="yes" \
-    DEBIAN_FRONTEND="noninteractive" \
-    TERM=xterm \
-    LANGUAGE="en_US.UTF-8" \
-    LANG="en_US.UTF-8" \
-    LC_ALL="en_US.UTF-8" \
-    CLEANUP="/tmp/* /var/tmp/* /var/log/* /var/lib/apt/lists/* /var/lib/{apt,dpkg,cache,log}/ /var/cache/apt/archives /usr/share/doc/ /usr/share/man/ /usr/share/locale/ /root/.cpan /root/.cpanm"
+    # Minimal notwendige Systempakete
+    ARG DEPENDENCIES="git ca-certificates tzdata python3 python3-venv python3-pip"
 
-COPY root/entrypoint /usr/local/sbin/entrypoint
-COPY root/easyepg.process /usr/local/bin/easyepg.process
-COPY root/easyepg.update /usr/local/bin/easyepg.update
-COPY root/packages.cleanup /usr/local/sbin/packages.cleanup
+    # Gepinnte, sichere Python-Runtime (wird in /opt/venv installiert)
+    ARG PIP_PKGS="\
+      bottle==0.12.25 \
+      requests==2.32.3 \
+      urllib3==2.2.2 \
+      certifi==2024.7.4 \
+      idna==3.7 \
+      xmltodict==0.13.0 \
+      beautifulsoup4==4.12.3 \
+      simplejson==3.19.3 \
+    "
 
-# 1) Zeilenenden normalisieren (CRLF -> LF), falls die Quelle mal Windows-CRLF hat
-RUN sed -i "s/\r$//" /usr/local/bin/easyepg.process || true && \
-    sed -i "s/\r$//" /usr/local/sbin/entrypoint || true
+    RUN set -eux; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends ${DEPENDENCIES}; \
+        rm -rf /var/lib/apt/lists/*; \
+        \
+        python3 -m venv /opt/venv; \
+        /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel; \
+        /opt/venv/bin/pip install --no-cache-dir ${PIP_PKGS}; \
+        /opt/venv/bin/pip check
 
-# 2) Shebang absichern (nur wenn keins vorhanden)
-RUN grep -q "^#\!/" /usr/local/bin/easyepg.process || sed -i "1i #!/bin/sh" /usr/local/bin/easyepg.process && \
-    grep -q "^#\!/" /usr/local/sbin/entrypoint || sed -i "1i #!/bin/sh" /usr/local/sbin/entrypoint
+    # venv zuerst im PATH
+    ENV PATH="/opt/venv/bin:${{PATH}}"
 
-# 3) Ausführbarkeitsrechte setzen
-RUN chmod 0755 /usr/local/bin/easyepg.process /usr/local/sbin/entrypoint
+    # easyepg-Skripte
+    COPY root/entrypoint /usr/local/sbin/entrypoint
+    COPY root/easyepg.process /usr/local/bin/easyepg.process
+    COPY root/easyepg.update /usr/local/bin/easyepg.update
+    COPY root/packages.cleanup /usr/local/sbin/packages.cleanup
 
-RUN apt-get -qy update \
-    ### tweak some apt & dpkg settngs
-    && echo "APT::Install-Recommends "0";" >> /etc/apt/apt.conf.d/docker-noinstall-recommends \
-    && echo "APT::Install-Suggests "0";" >> /etc/apt/apt.conf.d/docker-noinstall-suggests \
-    && echo "Dir::Cache "";" >> /etc/apt/apt.conf.d/docker-nocache \
-    && echo "Dir::Cache::archives "";" >> /etc/apt/apt.conf.d/docker-nocache \
-    && echo "path-exclude=/usr/share/locale/*" >> /etc/dpkg/dpkg.cfg.d/docker-nolocales \
-    && echo "path-exclude=/usr/share/man/*" >> /etc/dpkg/dpkg.cfg.d/docker-noman \
-    && echo "path-exclude=/usr/share/doc/*" >> /etc/dpkg/dpkg.cfg.d/docker-nodoc \
-    && echo "path-include=/usr/share/doc/*/copyright" >> /etc/dpkg/dpkg.cfg.d/docker-nodoc \
-    ### install basic packages
-    && apt-get install -qy apt-utils locales tzdata \
-    ### limit locale to en_US.UTF-8
-    && sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
-    && locale-gen en_US.UTF-8 \
-    && update-locale LANG=en_US.UTF-8 \
-    && locale-gen --purge en_US.UTF-8 \
-    ### run dist-upgrade
-    && apt-get dist-upgrade -qy \
-    ### install easyepg dependencies
-    && apt-get install -qy ${DEPENDENCIES} \
-    ## configure System
-    && update-ca-certificates --fresh \
-    ### create necessary files/directories
-    && mkdir -p /easyepg \
-    && mkdir -p /easyepg/xml \
-    ### alter permissions
-    && chmod +x /usr/local/sbin/entrypoint \
-    && chmod +x /usr/local/bin/easyepg.process \
-    && chmod +x /usr/local/bin/easyepg.update \
-    && chmod +x /usr/local/sbin/packages.cleanup \
-    ### cleanup
-    && /usr/local/sbin/packages.cleanup
+    # CRLF -> LF, Shebangs absichern, Rechte setzen
+    RUN sed -i 's/\r$//' /usr/local/bin/easyepg.process || true \
+     && sed -i 's/\r$//' /usr/local/sbin/entrypoint || true \
+     && grep -q '^#!' /usr/local/bin/easyepg.process || sed -i '1i #!/bin/sh' /usr/local/bin/easyepg.process \
+     && grep -q '^#!' /usr/local/sbin/entrypoint     || sed -i '1i #!/bin/sh' /usr/local/sbin/entrypoint \
+     && chmod 0755 /usr/local/bin/easyepg.process /usr/local/sbin/entrypoint
 
-ENTRYPOINT [ "/usr/local/sbin/entrypoint" ]
+    # Sanity: Runtime-Module importierbar?
+    RUN python - <<'PY'
+import bottle, requests, bs4, xmltodict, simplejson, urllib3, certifi, idna
+print("Runtime deps OK:", bottle.__version__, requests.__version__)
+PY
 
-VOLUME /easyepg
-VOLUME /easyepg/xml
-EXPOSE 4000
+    # OCI-Labels & Lizenz
+    LABEL org.opencontainers.image.title="new-easyepg (Unofficial fork)" \
+          org.opencontainers.image.description="NEW EasyEPG on Debian 13-slim with venv + security-patched Python deps; multi-arch" \
+          org.opencontainers.image.source="https://github.com/Railsimulatornet/docker.new-easyepg" \
+          org.opencontainers.image.url="https://hub.docker.com/r/railsimulatornet/new-easyepg" \
+          org.opencontainers.image.licenses="GPL-3.0-only"
+    COPY LICENSE /usr/share/licenses/GPL-3.0.txt
 
-FROM build
-
-RUN rm -rf /usr/bin/qemu-*
+    VOLUME ["/easyepg", "/easyepg/xml"]
+    EXPOSE 4000
+    ENTRYPOINT ["/usr/local/sbin/entrypoint"]
