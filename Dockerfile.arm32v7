@@ -1,6 +1,5 @@
-FROM debian:13-slim
+FROM python:3.12-slim
 
-    # Default environment values (can be overridden at runtime)
 ENV USER_ID="99" \
     GROUP_ID="100" \
     TIMEZONE="Europe/Berlin" \
@@ -10,10 +9,12 @@ ENV USER_ID="99" \
     DEBIAN_FRONTEND="noninteractive" \
     PYTHONUNBUFFERED="1"
 
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends git ca-certificates tzdata; \
+    rm -rf /var/lib/apt/lists/*
 
-    # Minimal notwendige Systempakete
-    ARG DEPENDENCIES="git ca-certificates tzdata python3 python3-venv python3-pip"
-    ARG PIP_PKGS="\
+ARG PIP_PKGS="\
   bottle==0.12.25 \
   requests==2.32.3 \
   urllib3==2.2.2 \
@@ -23,49 +24,33 @@ ENV USER_ID="99" \
   beautifulsoup4==4.12.3 \
   simplejson==3.19.3 \
 "
+RUN set -eux; \
+    python -m venv /opt/venv; \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel; \
+    /opt/venv/bin/pip install --no-cache-dir ${PIP_PKGS}; \
+    /opt/venv/bin/pip check
+ENV PATH="/opt/venv/bin:${PATH}"
 
-    RUN set -eux; \
-        apt-get update; \
-        apt-get install -y --no-install-recommends ${DEPENDENCIES}; \
-        rm -rf /var/lib/apt/lists/*; \
-        \
-        python3 -m venv /opt/venv; \
-        /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel; \
-        /opt/venv/bin/pip install --no-cache-dir ${PIP_PKGS}; \
-        /opt/venv/bin/pip check
+COPY root/entrypoint /usr/local/sbin/entrypoint
+COPY root/easyepg.process /usr/local/bin/easyepg.process
+COPY root/easyepg.update /usr/local/bin/easyepg.update
+COPY root/packages.cleanup /usr/local/sbin/packages.cleanup
 
-    # venv zuerst im PATH
-    ENV PATH="/opt/venv/bin:${PATH}"
+RUN sed -i 's/\r$//' /usr/local/bin/easyepg.process || true \
+ && sed -i 's/\r$//' /usr/local/sbin/entrypoint || true \
+ && grep -q '^#!' /usr/local/bin/easyepg.process || sed -i '1i #!/bin/sh' /usr/local/bin/easyepg.process \
+ && grep -q '^#!' /usr/local/sbin/entrypoint     || sed -i '1i #!/bin/sh' /usr/local/sbin/entrypoint \
+ && chmod 0755 /usr/local/bin/easyepg.process /usr/local/sbin/entrypoint /usr/local/bin/easyepg.update /usr/local/sbin/packages.cleanup
 
-    # easyepg-Skripte
-    COPY root/entrypoint /usr/local/sbin/entrypoint
-    COPY root/easyepg.process /usr/local/bin/easyepg.process
-    COPY root/easyepg.update /usr/local/bin/easyepg.update
-    COPY root/packages.cleanup /usr/local/sbin/packages.cleanup
+RUN python -c 'import bottle,requests,bs4,xmltodict,simplejson,urllib3,certifi,idna; print("Runtime deps OK:", bottle.__version__, requests.__version__)'
 
-    # CRLF -> LF, Shebangs absichern, Rechte setzen
-    RUN sed -i 's/\r$//' /usr/local/bin/easyepg.process || true \
-     && sed -i 's/\r$//' /usr/local/sbin/entrypoint || true \
-     && grep -q '^#!' /usr/local/bin/easyepg.process || sed -i '1i #!/bin/sh' /usr/local/bin/easyepg.process \
-     && grep -q '^#!' /usr/local/sbin/entrypoint     || sed -i '1i #!/bin/sh' /usr/local/sbin/entrypoint \
-     && chmod 0755 /usr/local/bin/easyepg.process /usr/local/sbin/entrypoint /usr/local/bin/easyepg.update /usr/local/sbin/packages.cleanup
+LABEL org.opencontainers.image.title="new-easyepg (Unofficial fork)" \
+      org.opencontainers.image.description="NEW EasyEPG on Python 3.12-slim with venv + security-pinned Python deps; multi-arch" \
+      org.opencontainers.image.source="https://github.com/Railsimulatornet/docker.new-easyepg" \
+      org.opencontainers.image.url="https://hub.docker.com/r/railsimulatornet/new-easyepg" \
+      org.opencontainers.image.licenses="GPL-3.0-only"
+COPY LICENSE /usr/share/licenses/GPL-3.0.txt
 
-    # Optional: zusätzliches Aufräumen
-    RUN /usr/local/sbin/packages.cleanup || true
-
-    # Sanity: Runtime-Module importierbar?
-    RUN python -c 'import bottle,requests,bs4,xmltodict,simplejson,urllib3,certifi,idna; print("Runtime deps OK:", bottle.__version__, requests.__version__)'
-
-    # OCI-Labels & Lizenz
-    LABEL org.opencontainers.image.title="new-easyepg (Unofficial fork)" \
-          org.opencontainers.image.description="NEW EasyEPG on Debian 13-slim with venv + security-pinned Python deps; multi-arch" \
-          org.opencontainers.image.source="https://github.com/Railsimulatornet/docker.new-easyepg" \
-          org.opencontainers.image.url="https://hub.docker.com/r/railsimulatornet/new-easyepg" \
-          org.opencontainers.image.licenses="GPL-3.0-only"
-    COPY LICENSE /usr/share/licenses/GPL-3.0.txt
-
-    VOLUME ["/easyepg", "/easyepg/xml"]
-    EXPOSE 4000
-    ENTRYPOINT ["/usr/local/sbin/entrypoint"]
-
-# Hinweis: Keine statischen qemu-*-static Binaries ins Image kopieren; Buildx/QEMU emuliert hostseitig.
+VOLUME ["/easyepg", "/easyepg/xml"]
+EXPOSE 4000
+ENTRYPOINT ["/usr/local/sbin/entrypoint"]
