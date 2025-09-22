@@ -5,7 +5,7 @@ on:
     branches: [ "main" ]
     tags: [ "v*", "bs4fix*" ]
   schedule:
-    # täglich 03:10 UTC (anpassen nach Wunsch)
+    # täglich 03:10 UTC
     - cron: "10 3 * * *"
   workflow_dispatch:
 
@@ -17,7 +17,7 @@ env:
   REPO: docker.io/railsimulatornet/new-easyepg
 
 jobs:
-  # 1) Nur bauen, wenn es was Neues gibt (Base-Digest oder PyPI Patch-Release)
+  # 1) Nur bauen, wenn es was Neues gibt (Base-Digest oder PyPI-Patchrelease)
   check:
     runs-on: ubuntu-latest
     outputs:
@@ -26,7 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Compute update fingerprint (base digest + latest patch versions)
         id: fingerprint
@@ -35,39 +36,40 @@ jobs:
           set -euo pipefail
 
           BASE="python:3.12-slim"
-          # Digest des Base-Images
-          DIGEST="$(docker buildx imagetools inspect "$BASE" | awk -F': ' '/Digest:/ {print $2; exit}')"
+          # Digest des Base-Images ziehen
+          DIGEST="$(docker buildx imagetools inspect "${BASE}" | awk -F': ' '/Digest:/ {print $2; exit}')"
 
-          # Aus requirements.txt nur "~=" Constraints auslesen und jeweils
-          # das jüngste Patchrelease aus PyPI bestimmen (z.B. 2.32.x)
-          python - <<'PY' > /tmp/pip-latest.txt
-import re, json, sys, urllib.request
-reqs = []
-for line in open("requirements.txt", encoding="utf-8"):
-    line=line.strip()
-    if not line or line.startswith("#"): continue
-    m = re.match(r'([A-Za-z0-9_.-]+)\s*~=\s*([0-9]+)\.([0-9]+)', line)
-    if not m: 
-        continue
-    name = m.group(1)
-    minor = f"{m.group(2)}.{m.group(3)}"
-    url  = f"https://pypi.org/pypi/{name}/json"
-    with urllib.request.urlopen(url) as r:
-        data = json.load(r)
-    # alle Releases, die mit "X.Y." beginnen → neuestes wählen
-    versions = [v for v in data["releases"].keys() if v.startswith(minor + ".")]
-    def key(v):
-        parts = re.split(r'(\d+)', v)
-        return [int(p) if p.isdigit() else p for p in parts]
-    latest = sorted(versions, key=key)[-1] if versions else data["info"]["version"]
-    print(f"{name}={latest}")
-PY
+          # Aus requirements.txt "~=" Constraints lesen und jeweils neuestes Patch-Release ermitteln
+          python <<'PY' > /tmp/pip-latest.txt
+          import re, json, urllib.request
+          out = []
+          with open("requirements.txt", encoding="utf-8") as f:
+              for line in f:
+                  line = line.strip()
+                  if not line or line.startswith("#"):
+                      continue
+                  m = re.match(r'([A-Za-z0-9_.-]+)\s*~=\s*([0-9]+)\.([0-9]+)', line)
+                  if not m:
+                      continue
+                  name = m.group(1)
+                  minor = f"{m.group(2)}.{m.group(3)}"
+                  url  = f"https://pypi.org/pypi/{name}/json"
+                  with urllib.request.urlopen(url) as r:
+                      data = json.load(r)
+                  versions = [v for v in data["releases"].keys() if v.startswith(minor + ".")]
+                  def key(v):
+                      parts = re.split(r'(\d+)', v)
+                      return [int(p) if p.isdigit() else p for p in parts]
+                  latest = sorted(versions, key=key)[-1] if versions else data["info"]["version"]
+                  out.append(f"{name}={latest}")
+          print(";".join(out))
+          PY
 
-          PIP_FP="$(tr '\n' ';' < /tmp/pip-latest.txt | sed 's/;*$//')"
+          PIP_FP="$(cat /tmp/pip-latest.txt)"
           FP="base=${DIGEST};${PIP_FP}"
-          echo "value=$FP" >> "$GITHUB_OUTPUT"
+          echo "value=${FP}" >> "${GITHUB_OUTPUT}"
 
-      - name: Cache probe by fingerprint (skip build if unchanged)
+      - name: Cache by fingerprint (skip build if unchanged)
         id: cache
         uses: actions/cache@v4
         with:
@@ -78,14 +80,14 @@ PY
         id: decide
         shell: bash
         run: |
-          if [ "${{ steps.cache.outputs.cache-hit }}" = "true" ]; then
+          if [[ "${{ steps.cache.outputs.cache-hit }}" == "true" ]]; then
             echo "No changes detected."
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "should_build=false" >> "${GITHUB_OUTPUT}"
           else
             mkdir -p .fp-cache
             echo "${{ steps.fingerprint.outputs.value }}" > .fp-cache/fingerprint
             echo "Changes detected -> build"
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "should_build=true" >> "${GITHUB_OUTPUT}"
           fi
 
   build-arch:
@@ -108,8 +110,8 @@ PY
     steps:
       - uses: actions/checkout@v4
 
-      # Safety: alte cross-build Reste in ARM-Dockerfiles entfernen (falls irgendwo noch vorhanden)
       - name: Strip legacy qemu/cross-build lines (ARM Dockerfiles)
+        shell: bash
         run: |
           for f in Dockerfile.arm64v8 Dockerfile.arm32v7; do
             [[ -f "$f" ]] || continue
@@ -152,34 +154,34 @@ PY
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Create & Push multi-arch manifest (:bs4fix)
-        run: |
-          docker buildx imagetools create \
-            -t $REPO:bs4fix \
-            $REPO:bs4fix-amd64 \
-            $REPO:bs4fix-arm64 \
-            $REPO:bs4fix-armv7
         env:
           REPO: ${{ env.REPO }}
+        run: |
+          docker buildx imagetools create \
+            -t "$REPO:bs4fix" \
+            "$REPO:bs4fix-amd64" \
+            "$REPO:bs4fix-arm64" \
+            "$REPO:bs4fix-armv7"
 
       - name: Create & Push manifest for git tag
         if: startsWith(github.ref, 'refs/tags/')
+        env:
+          REPO: ${{ env.REPO }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           docker buildx imagetools create \
-            -t $REPO:${TAG} \
-            $REPO:bs4fix-amd64 \
-            $REPO:bs4fix-arm64 \
-            $REPO:bs4fix-armv7
-        env:
-          REPO: ${{ env.REPO }}
+            -t "$REPO:${TAG}" \
+            "$REPO:bs4fix-amd64" \
+            "$REPO:bs4fix-arm64" \
+            "$REPO:bs4fix-armv7"
 
       - name: Also tag :latest on main
         if: github.ref == 'refs/heads/main'
-        run: |
-          docker buildx imagetools create \
-            -t $REPO:latest \
-            $REPO:bs4fix-amd64 \
-            $REPO:bs4fix-arm64 \
-            $REPO:bs4fix-armv7
         env:
           REPO: ${{ env.REPO }}
+        run: |
+          docker buildx imagetools create \
+            -t "$REPO:latest" \
+            "$REPO:bs4fix-amd64" \
+            "$REPO:bs4fix-arm64" \
+            "$REPO:bs4fix-armv7"
