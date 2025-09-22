@@ -54,10 +54,8 @@ ENV USER_ID="99" \
     RUN /usr/local/sbin/packages.cleanup || true
 
     # Sanity: Runtime-Module importierbar?
-    RUN python - <<'PY'
-    import bottle, requests, bs4, xmltodict, simplejson, urllib3, certifi, idna
-    print("Runtime deps OK:", bottle.__version__, requests.__version__)
-    PY
+    RUN python -c 'import bottle,requests,bs4,xmltodict,simplejson,urllib3,certifi,idna; print("Runtime deps OK:", bottle.__version__, requests.__version__)'
+
 
     # OCI-Labels & Lizenz
     LABEL org.opencontainers.image.title="new-easyepg (Unofficial fork)" \
