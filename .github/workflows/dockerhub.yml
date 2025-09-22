@@ -17,7 +17,6 @@ env:
   REPO: docker.io/railsimulatornet/new-easyepg
 
 jobs:
-  # 1) Nur bauen, wenn es was Neues gibt (Base-Digest oder PyPI-Patchrelease)
   check:
     runs-on: ubuntu-latest
     outputs:
@@ -36,38 +35,47 @@ jobs:
           set -euo pipefail
 
           BASE="python:3.12-slim"
-          # Digest des Base-Images ziehen
+          # Digest des Base-Images ermitteln
           DIGEST="$(docker buildx imagetools inspect "${BASE}" | awk -F': ' '/Digest:/ {print $2; exit}')"
+          echo "Base digest: $DIGEST"
 
-          # Aus requirements.txt "~=" Constraints lesen und jeweils neuestes Patch-Release ermitteln
-          python <<'PY' > /tmp/pip-latest.txt
-          import re, json, urllib.request
-          out = []
-          with open("requirements.txt", encoding="utf-8") as f:
-              for line in f:
-                  line = line.strip()
-                  if not line or line.startswith("#"):
-                      continue
-                  m = re.match(r'([A-Za-z0-9_.-]+)\s*~=\s*([0-9]+)\.([0-9]+)', line)
-                  if not m:
-                      continue
-                  name = m.group(1)
-                  minor = f"{m.group(2)}.{m.group(3)}"
-                  url  = f"https://pypi.org/pypi/{name}/json"
-                  with urllib.request.urlopen(url) as r:
-                      data = json.load(r)
-                  versions = [v for v in data["releases"].keys() if v.startswith(minor + ".")]
-                  def key(v):
-                      parts = re.split(r'(\d+)', v)
-                      return [int(p) if p.isdigit() else p for p in parts]
-                  latest = sorted(versions, key=key)[-1] if versions else data["info"]["version"]
-                  out.append(f"{name}={latest}")
-          print(";".join(out))
-          PY
+          # Mit PIP-Resolver (dry-run) die aktuellsten Patch-Releases gemäß requirements.txt ermitteln
+          cat > "$RUNNER_TEMP/check.py" << 'PY'
+import json, subprocess, sys, tempfile, time
 
-          PIP_FP="$(cat /tmp/pip-latest.txt)"
+req_text = open("requirements.txt", encoding="utf-8").read()
+with tempfile.NamedTemporaryFile("w", delete=False) as tf:
+    tf.write(req_text)
+    reqfile = tf.name
+
+cmd = [sys.executable, "-m", "pip", "install", "--dry-run", "--report", "-", "-r", reqfile]
+
+for attempt in range(3):
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    if p.returncode == 0 and p.stdout.strip():
+        try:
+            rep = json.loads(p.stdout)
+        except Exception:
+            rep = {}
+        pkgs = []
+        for it in rep.get("install", []):
+            meta = it.get("metadata", {}) or {}
+            n = (meta.get("name") or "").lower()
+            v = meta.get("version")
+            if n and v:
+                pkgs.append(f"{n}={v}")
+        print(";".join(sorted(pkgs)))
+        break
+    if attempt < 2:
+        time.sleep(2)
+else:
+    print("resolver=unavailable")
+PY
+
+          PIP_FP="$(python3 "$RUNNER_TEMP/check.py")"
           FP="base=${DIGEST};${PIP_FP}"
-          echo "value=${FP}" >> "${GITHUB_OUTPUT}"
+          echo "value=${FP}" >> "$GITHUB_OUTPUT"
+          echo "Fingerprint: ${FP}"
 
       - name: Cache by fingerprint (skip build if unchanged)
         id: cache
@@ -82,12 +90,12 @@ jobs:
         run: |
           if [[ "${{ steps.cache.outputs.cache-hit }}" == "true" ]]; then
             echo "No changes detected."
-            echo "should_build=false" >> "${GITHUB_OUTPUT}"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
           else
             mkdir -p .fp-cache
             echo "${{ steps.fingerprint.outputs.value }}" > .fp-cache/fingerprint
             echo "Changes detected -> build"
-            echo "should_build=true" >> "${GITHUB_OUTPUT}"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
           fi
 
   build-arch:
