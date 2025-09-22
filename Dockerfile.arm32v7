@@ -12,30 +12,23 @@ ENV USER_ID="99" \
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends git ca-certificates tzdata; \
+    apt-get install -y --no-install-recommends --only-upgrade libexpat1 || true; \
     rm -rf /var/lib/apt/lists/*
 
-ARG PIP_PKGS="\
-  bottle==0.12.25 \
-  requests==2.32.3 \
-  urllib3==2.2.2 \
-  certifi==2024.7.4 \
-  idna==3.7 \
-  xmltodict==0.13.0 \
-  beautifulsoup4==4.12.3 \
-  simplejson==3.19.3 \
-"
-RUN set -eux; \
-    python -m venv /opt/venv; \
-    /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel; \
-    /opt/venv/bin/pip install --no-cache-dir ${PIP_PKGS}; \
+COPY requirements.txt /tmp/requirements.txt
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt && \
     /opt/venv/bin/pip check
 ENV PATH="/opt/venv/bin:${PATH}"
 
+# --- easyepg-Skripte ---
 COPY root/entrypoint /usr/local/sbin/entrypoint
 COPY root/easyepg.process /usr/local/bin/easyepg.process
 COPY root/easyepg.update /usr/local/bin/easyepg.update
 COPY root/packages.cleanup /usr/local/sbin/packages.cleanup
 
+# CRLF -> LF, Shebangs absichern, Rechte setzen
 RUN sed -i 's/\r$//' /usr/local/bin/easyepg.process || true \
  && sed -i 's/\r$//' /usr/local/sbin/entrypoint || true \
  && grep -q '^#!' /usr/local/bin/easyepg.process || sed -i '1i #!/bin/sh' /usr/local/bin/easyepg.process \
@@ -45,7 +38,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/easyepg.process || true \
 RUN python -c 'import bottle,requests,bs4,xmltodict,simplejson,urllib3,certifi,idna; print("Runtime deps OK:", bottle.__version__, requests.__version__)'
 
 LABEL org.opencontainers.image.title="new-easyepg (Unofficial fork)" \
-      org.opencontainers.image.description="NEW EasyEPG on Python 3.12-slim with venv + security-pinned Python deps; multi-arch" \
+      org.opencontainers.image.description="NEW EasyEPG on Python 3.12-slim with venv + patch-ranged Python deps; multi-arch" \
       org.opencontainers.image.source="https://github.com/Railsimulatornet/docker.new-easyepg" \
       org.opencontainers.image.url="https://hub.docker.com/r/railsimulatornet/new-easyepg" \
       org.opencontainers.image.licenses="GPL-3.0-only"
