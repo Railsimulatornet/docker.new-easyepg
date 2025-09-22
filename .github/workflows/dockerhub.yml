@@ -3,12 +3,15 @@ name: Build & Push to Docker Hub (multi-arch)
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*", "bs4fix*" ]
+    tags:     [ "v*", "bs4fix*" ]
   workflow_dispatch:
 
+concurrency:
+  group: dockerhub-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  IMAGE_NAME: new-easyepg
-  REPO: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/new-easyepg
+  REPO: docker.io/railsimulatornet/new-easyepg
 
 jobs:
   build-arch:
@@ -26,8 +29,19 @@ jobs:
           - dockerfile: Dockerfile.arm32v7
             platform: linux/arm/v7
             suffix: armv7
+
     steps:
       - uses: actions/checkout@v4
+
+      # Entfernt alte Cross-Build/Static-QEMU-Zeilen,
+      # damit Buildx/QEMU sauber arbeitet und dein früherer Fehler nicht auftritt.
+      - name: Strip legacy qemu/cross-build lines (ARM Dockerfiles)
+        run: |
+          for f in Dockerfile.arm64v8 Dockerfile.arm32v7; do
+            [[ -f "$f" ]] || continue
+            sed -i '/qemu-.*-static/d;/QEMU_EXECVE/d;/cross-build-start/d;/cross-build-end/d' "$f" || true
+          done
+          echo "Patched Dockerfiles (if needed)."
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -45,11 +59,12 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           push: true
+          # Fix-Tag + zusätzlich commit-spezifischer Tag zum Nachvollziehen
           tags: |
             ${{ env.REPO }}:bs4fix-${{ matrix.suffix }}
             ${{ env.REPO }}:${{ github.sha }}-${{ matrix.suffix }}
           cache-from: type=registry,ref=${{ env.REPO }}:cache-${{ matrix.suffix }}
-          cache-to: type=registry,mode=max,ref=${{ env.REPO }}:cache-${{ matrix.suffix }}
+          cache-to:   type=registry,mode=max,ref=${{ env.REPO }}:cache-${{ matrix.suffix }}
 
   manifest:
     needs: build-arch
@@ -73,6 +88,20 @@ jobs:
         env:
           REPO: ${{ env.REPO }}
 
+      # Optional: bei Tags zusätzlich auch das Tag als Manifest veröffentlichen (v0.x, bs4fix-xyz, ...)
+      - name: Create & Push manifest for git tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          docker buildx imagetools create \
+            -t $REPO:${TAG} \
+            $REPO:bs4fix-amd64 \
+            $REPO:bs4fix-arm64 \
+            $REPO:bs4fix-armv7
+        env:
+          REPO: ${{ env.REPO }}
+
+      # Zusätzlich :latest auf main aktualisieren
       - name: Also tag :latest on main
         if: github.ref == 'refs/heads/main'
         run: |
