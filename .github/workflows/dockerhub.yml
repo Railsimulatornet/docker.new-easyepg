@@ -5,8 +5,8 @@ on:
     branches: [ "main" ]
     tags: [ "v*", "bs4fix*" ]
   schedule:
-    # Jeden Montag 03:00 UTC (anpassen wie du willst)
-    - cron:  '0 3 * * 1'
+    # täglich 03:10 UTC (anpassen nach Wunsch)
+    - cron: "10 3 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -17,7 +17,80 @@ env:
   REPO: docker.io/railsimulatornet/new-easyepg
 
 jobs:
+  # 1) Nur bauen, wenn es was Neues gibt (Base-Digest oder PyPI Patch-Release)
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+      fingerprint:  ${{ steps.fingerprint.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Compute update fingerprint (base digest + latest patch versions)
+        id: fingerprint
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE="python:3.12-slim"
+          # Digest des Base-Images
+          DIGEST="$(docker buildx imagetools inspect "$BASE" | awk -F': ' '/Digest:/ {print $2; exit}')"
+
+          # Aus requirements.txt nur "~=" Constraints auslesen und jeweils
+          # das jüngste Patchrelease aus PyPI bestimmen (z.B. 2.32.x)
+          python - <<'PY' > /tmp/pip-latest.txt
+import re, json, sys, urllib.request
+reqs = []
+for line in open("requirements.txt", encoding="utf-8"):
+    line=line.strip()
+    if not line or line.startswith("#"): continue
+    m = re.match(r'([A-Za-z0-9_.-]+)\s*~=\s*([0-9]+)\.([0-9]+)', line)
+    if not m: 
+        continue
+    name = m.group(1)
+    minor = f"{m.group(2)}.{m.group(3)}"
+    url  = f"https://pypi.org/pypi/{name}/json"
+    with urllib.request.urlopen(url) as r:
+        data = json.load(r)
+    # alle Releases, die mit "X.Y." beginnen → neuestes wählen
+    versions = [v for v in data["releases"].keys() if v.startswith(minor + ".")]
+    def key(v):
+        parts = re.split(r'(\d+)', v)
+        return [int(p) if p.isdigit() else p for p in parts]
+    latest = sorted(versions, key=key)[-1] if versions else data["info"]["version"]
+    print(f"{name}={latest}")
+PY
+
+          PIP_FP="$(tr '\n' ';' < /tmp/pip-latest.txt | sed 's/;*$//')"
+          FP="base=${DIGEST};${PIP_FP}"
+          echo "value=$FP" >> "$GITHUB_OUTPUT"
+
+      - name: Cache probe by fingerprint (skip build if unchanged)
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .fp-cache/fingerprint
+          key: update-fp-${{ steps.fingerprint.outputs.value }}
+
+      - name: Decide to build or skip
+        id: decide
+        shell: bash
+        run: |
+          if [ "${{ steps.cache.outputs.cache-hit }}" = "true" ]; then
+            echo "No changes detected."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            mkdir -p .fp-cache
+            echo "${{ steps.fingerprint.outputs.value }}" > .fp-cache/fingerprint
+            echo "Changes detected -> build"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build-arch:
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -32,19 +105,16 @@ jobs:
           - dockerfile: Dockerfile.arm32v7
             platform: linux/arm/v7
             suffix: armv7
-
     steps:
       - uses: actions/checkout@v4
 
-      # Entfernt alte Cross-Build/Static-QEMU-Zeilen,
-      # damit Buildx/QEMU sauber arbeitet und dein früherer Fehler nicht auftritt.
+      # Safety: alte cross-build Reste in ARM-Dockerfiles entfernen (falls irgendwo noch vorhanden)
       - name: Strip legacy qemu/cross-build lines (ARM Dockerfiles)
         run: |
           for f in Dockerfile.arm64v8 Dockerfile.arm32v7; do
             [[ -f "$f" ]] || continue
             sed -i '/qemu-.*-static/d;/QEMU_EXECVE/d;/cross-build-start/d;/cross-build-end/d' "$f" || true
           done
-          echo "Patched Dockerfiles (if needed)."
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -62,7 +132,6 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           push: true
-          # Fix-Tag + zusätzlich commit-spezifischer Tag zum Nachvollziehen
           tags: |
             ${{ env.REPO }}:bs4fix-${{ matrix.suffix }}
             ${{ env.REPO }}:${{ github.sha }}-${{ matrix.suffix }}
@@ -71,6 +140,7 @@ jobs:
 
   manifest:
     needs: build-arch
+    if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3
@@ -91,7 +161,6 @@ jobs:
         env:
           REPO: ${{ env.REPO }}
 
-      # Optional: bei Tags zusätzlich auch das Tag als Manifest veröffentlichen (v0.x, bs4fix-xyz, ...)
       - name: Create & Push manifest for git tag
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -104,7 +173,6 @@ jobs:
         env:
           REPO: ${{ env.REPO }}
 
-      # Zusätzlich :latest auf main aktualisieren
       - name: Also tag :latest on main
         if: github.ref == 'refs/heads/main'
         run: |
