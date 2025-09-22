@@ -5,8 +5,8 @@ on:
     branches: [ "main" ]
     tags: [ "v*", "bs4fix*" ]
   schedule:
-    # täglich 03:10 UTC
-    - cron: "10 3 * * *"
+    # Jeden Montag 03:00 UTC (anpassen wie du willst)
+    - cron:  '0 3 * * 1'
   workflow_dispatch:
 
 concurrency:
@@ -17,90 +17,7 @@ env:
   REPO: docker.io/railsimulatornet/new-easyepg
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    outputs:
-      should_build: ${{ steps.decide.outputs.should_build }}
-      fingerprint:  ${{ steps.fingerprint.outputs.value }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Compute update fingerprint (base digest + latest patch versions)
-        id: fingerprint
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          BASE="python:3.12-slim"
-          # Digest des Base-Images ermitteln
-          DIGEST="$(docker buildx imagetools inspect "${BASE}" | awk -F': ' '/Digest:/ {print $2; exit}')"
-          echo "Base digest: $DIGEST"
-
-          # Mit PIP-Resolver (dry-run) die aktuellsten Patch-Releases gemäß requirements.txt ermitteln
-          cat > "$RUNNER_TEMP/check.py" << 'PY'
-import json, subprocess, sys, tempfile, time
-
-req_text = open("requirements.txt", encoding="utf-8").read()
-with tempfile.NamedTemporaryFile("w", delete=False) as tf:
-    tf.write(req_text)
-    reqfile = tf.name
-
-cmd = [sys.executable, "-m", "pip", "install", "--dry-run", "--report", "-", "-r", reqfile]
-
-for attempt in range(3):
-    p = subprocess.run(cmd, capture_output=True, text=True)
-    if p.returncode == 0 and p.stdout.strip():
-        try:
-            rep = json.loads(p.stdout)
-        except Exception:
-            rep = {}
-        pkgs = []
-        for it in rep.get("install", []):
-            meta = it.get("metadata", {}) or {}
-            n = (meta.get("name") or "").lower()
-            v = meta.get("version")
-            if n and v:
-                pkgs.append(f"{n}={v}")
-        print(";".join(sorted(pkgs)))
-        break
-    if attempt < 2:
-        time.sleep(2)
-else:
-    print("resolver=unavailable")
-PY
-
-          PIP_FP="$(python3 "$RUNNER_TEMP/check.py")"
-          FP="base=${DIGEST};${PIP_FP}"
-          echo "value=${FP}" >> "$GITHUB_OUTPUT"
-          echo "Fingerprint: ${FP}"
-
-      - name: Cache by fingerprint (skip build if unchanged)
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: .fp-cache/fingerprint
-          key: update-fp-${{ steps.fingerprint.outputs.value }}
-
-      - name: Decide to build or skip
-        id: decide
-        shell: bash
-        run: |
-          if [[ "${{ steps.cache.outputs.cache-hit }}" == "true" ]]; then
-            echo "No changes detected."
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-          else
-            mkdir -p .fp-cache
-            echo "${{ steps.fingerprint.outputs.value }}" > .fp-cache/fingerprint
-            echo "Changes detected -> build"
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-          fi
-
   build-arch:
-    needs: check
-    if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -115,17 +32,19 @@ PY
           - dockerfile: Dockerfile.arm32v7
             platform: linux/arm/v7
             suffix: armv7
+
     steps:
       - uses: actions/checkout@v4
 
+      # Entfernt alte Cross-Build/Static-QEMU-Zeilen,
+      # damit Buildx/QEMU sauber arbeitet und dein früherer Fehler nicht auftritt.
       - name: Strip legacy qemu/cross-build lines (ARM Dockerfiles)
-        shell: bash
         run: |
           for f in Dockerfile.arm64v8 Dockerfile.arm32v7; do
             [[ -f "$f" ]] || continue
             sed -i '/qemu-.*-static/d;/QEMU_EXECVE/d;/cross-build-start/d;/cross-build-end/d' "$f" || true
           done
-
+          echo "Patched Dockerfiles (if needed)."
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
@@ -142,6 +61,7 @@ PY
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           push: true
+          # Fix-Tag + zusätzlich commit-spezifischer Tag zum Nachvollziehen
           tags: |
             ${{ env.REPO }}:bs4fix-${{ matrix.suffix }}
             ${{ env.REPO }}:${{ github.sha }}-${{ matrix.suffix }}
@@ -150,7 +70,6 @@ PY
 
   manifest:
     needs: build-arch
-    if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3
@@ -162,34 +81,36 @@ PY
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Create & Push multi-arch manifest (:bs4fix)
-        env:
-          REPO: ${{ env.REPO }}
         run: |
           docker buildx imagetools create \
-            -t "$REPO:bs4fix" \
-            "$REPO:bs4fix-amd64" \
-            "$REPO:bs4fix-arm64" \
-            "$REPO:bs4fix-armv7"
-
-      - name: Create & Push manifest for git tag
-        if: startsWith(github.ref, 'refs/tags/')
+            -t $REPO:bs4fix \
+            $REPO:bs4fix-amd64 \
+            $REPO:bs4fix-arm64 \
+            $REPO:bs4fix-armv7
         env:
           REPO: ${{ env.REPO }}
+
+      # Optional: bei Tags zusätzlich auch das Tag als Manifest veröffentlichen (v0.x, bs4fix-xyz, ...)
+      - name: Create & Push manifest for git tag
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           docker buildx imagetools create \
-            -t "$REPO:${TAG}" \
-            "$REPO:bs4fix-amd64" \
-            "$REPO:bs4fix-arm64" \
-            "$REPO:bs4fix-armv7"
-
-      - name: Also tag :latest on main
-        if: github.ref == 'refs/heads/main'
+            -t $REPO:${TAG} \
+            $REPO:bs4fix-amd64 \
+            $REPO:bs4fix-arm64 \
+            $REPO:bs4fix-armv7
         env:
           REPO: ${{ env.REPO }}
+
+      # Zusätzlich :latest auf main aktualisieren
+      - name: Also tag :latest on main
+        if: github.ref == 'refs/heads/main'
         run: |
           docker buildx imagetools create \
-            -t "$REPO:latest" \
-            "$REPO:bs4fix-amd64" \
-            "$REPO:bs4fix-arm64" \
-            "$REPO:bs4fix-armv7"
+            -t $REPO:latest \
+            $REPO:bs4fix-amd64 \
+            $REPO:bs4fix-arm64 \
+            $REPO:bs4fix-armv7
+        env:
+          REPO: ${{ env.REPO }}
