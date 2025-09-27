@@ -11,15 +11,19 @@ ENV USER_ID="99" \
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends git ca-certificates tzdata python3-cffi; \
+    apt-get install -y --no-install-recommends git ca-certificates tzdata libffi8; \
     apt-get install -y --no-install-recommends --only-upgrade libexpat1 || true; \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt
-RUN python -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt && \
-    /opt/venv/bin/pip check
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential libffi-dev \
+ && python -m venv /opt/venv \
+ && /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+ && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt \
+ && /opt/venv/bin/pip check \
+ && apt-get purge -y --auto-remove build-essential libffi-dev \
+ && rm -rf /var/lib/apt/lists/*
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # --- easyepg-Skripte ---
