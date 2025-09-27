@@ -11,7 +11,7 @@ ENV USER_ID="99" \
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends git ca-certificates tzdata; \
+    apt-get install -y --no-install-recommends git ca-certificates tzdata python3-cffi; \
     apt-get install -y --no-install-recommends --only-upgrade libexpat1 || true; \
     rm -rf /var/lib/apt/lists/*
 
