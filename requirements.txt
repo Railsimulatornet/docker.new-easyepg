@@ -6,3 +6,4 @@ idna~=3.7
 xmltodict~=0.13
 beautifulsoup4~=4.12
 simplejson~=3.19
+cffi~=1.15
