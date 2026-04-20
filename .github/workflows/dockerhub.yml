@@ -4,7 +4,6 @@ on:
   push:
     branches: [ "main" ]
   schedule:
-    # Jeden Montag 03:00 UTC
     - cron: "0 3 * * 1"
   workflow_dispatch:
 
@@ -14,6 +13,7 @@ concurrency:
 
 env:
   REPO: docker.io/railsimulatornet/new-easyepg
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   prep:
@@ -55,7 +55,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Strip legacy qemu/cross-build lines (ARM Dockerfiles)
         shell: bash
@@ -67,19 +67,19 @@ jobs:
           echo "Patched Dockerfiles (if needed)."
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build & Push ${{ matrix.platform }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -96,10 +96,10 @@ jobs:
 
     steps:
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
