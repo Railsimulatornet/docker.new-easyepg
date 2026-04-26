@@ -10,12 +10,11 @@ ENV USER_ID="99" \
     DEBIAN_FRONTEND="noninteractive" \
     PYTHONUNBUFFERED="1"
 
-# --- System minimal & Base-Paket-Fixes ---
+# --- System minimal & Debian security updates ---
 RUN set -eux; \
     apt-get update; \
+    apt-get -y upgrade; \
     apt-get install -y --no-install-recommends git ca-certificates tzdata; \
-    # Base-Image CVEs (z. B. expat) schneller bekommen:
-    apt-get install -y --no-install-recommends --only-upgrade libexpat1 || true; \
     rm -rf /var/lib/apt/lists/*
 
 # --- venv + Requirements mit Patch-Ranges (autopatch bei jedem Build) ---
