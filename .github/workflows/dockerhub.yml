@@ -2,9 +2,9 @@ name: Build & Push to Docker Hub (multi-arch)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "master", "main" ]
   schedule:
-    - cron: "0 3 * * 1"
+    - cron: "0 3 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -85,10 +85,10 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           push: true
+          pull: true
+          no-cache: true
           tags: |
             ${{ env.REPO }}:${{ needs.prep.outputs.build_tag }}-${{ matrix.suffix }}
-          cache-from: type=registry,ref=${{ env.REPO }}:cache-${{ matrix.suffix }}
-          cache-to: type=registry,mode=max,ref=${{ env.REPO }}:cache-${{ matrix.suffix }}
 
   manifest:
     needs: [prep, build-arch]
