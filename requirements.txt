@@ -1,9 +1,9 @@
 bottle~=0.12.25
-requests~=2.32
-urllib3~=2.2
-certifi~=2024.7
-idna~=3.7
-xmltodict~=0.13
-beautifulsoup4~=4.12
-simplejson~=3.19
+requests>=2.32,<3
+urllib3>=2.2,<3
+certifi>=2024.7
+idna>=3.7,<4
+xmltodict>=0.13,<1
+beautifulsoup4>=4.12,<5
+simplejson>=3.19,<4
 cffi>=1.15,<3
