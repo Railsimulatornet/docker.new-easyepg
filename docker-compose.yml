@@ -1,15 +1,14 @@
-version: "2"
 services:
   new-easyepg:
-    image: takealug/new-easyepg:latest
+    image: railsimulatornet/new-easyepg:latest
     container_name: new-easyepg
     environment:
-      - PUID=99
-      - PGID=100
-      - TIMEZONE=Europe/Berlin
-      - UPDATE=yes
-      - REPO=script.service.easyepg-lite
-      - BRANCH=main
+      USER_ID: "99"
+      GROUP_ID: "100"
+      TIMEZONE: Europe/Berlin
+      UPDATE: "yes"
+      REPO: script.service.easyepg-lite
+      BRANCH: main
     volumes:
       - /home/dockeruser/new-easyepg/data:/easyepg
       - /home/dockeruser/new-easyepg/xml:/easyepg/xml
@@ -17,5 +16,5 @@ services:
       - /var/log
       - /tmp
     ports:
-      - 4000:4000
+      - "4000:4000"
     restart: unless-stopped
