@@ -22,6 +22,9 @@ RUN apt-get update \
  && /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
  && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt \
  && /opt/venv/bin/pip check \
+ && /opt/venv/bin/pip uninstall --yes setuptools wheel \
+ && /opt/venv/bin/pip uninstall --yes pip \
+ && test -z "$(find /opt/venv -path '*/pip/_vendor/bom.cdx.json' -print -quit)" \
  && apt-get purge -y --auto-remove build-essential libffi-dev \
  && rm -rf /var/lib/apt/lists/*
 ENV PATH="/opt/venv/bin:${PATH}"
