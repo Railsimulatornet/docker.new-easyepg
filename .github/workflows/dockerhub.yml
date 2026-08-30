@@ -89,9 +89,59 @@ jobs:
           no-cache: true
           tags: |
             ${{ env.REPO }}:${{ needs.prep.outputs.build_tag }}-${{ matrix.suffix }}
+          provenance: mode=max
+          sbom: true
+
+  security-gate:
+    needs: [prep, build-arch]
+    runs-on: ubuntu-latest
+    env:
+      TRIVY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      TRIVY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    steps:
+      - name: Scan all architecture candidates with Trivy
+        shell: bash
+        env:
+          REPO: ${{ env.REPO }}
+          BUILD_TAG: ${{ needs.prep.outputs.build_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.cache/trivy"
+
+          for spec in \
+            "linux/amd64 amd64" \
+            "linux/arm64 arm64" \
+            "linux/arm/v7 armv7"
+          do
+            platform="${spec%% *}"
+            suffix="${spec##* }"
+            image="${REPO}:${BUILD_TAG}-${suffix}"
+
+            echo
+            echo "============================================================"
+            echo "Security scan: ${image} (${platform})"
+            echo "============================================================"
+
+            docker run --rm \
+              -e TRIVY_USERNAME \
+              -e TRIVY_PASSWORD \
+              -v "${HOME}/.cache/trivy:/root/.cache/trivy" \
+              ghcr.io/aquasecurity/trivy:latest \
+              image \
+              --platform "${platform}" \
+              --image-src remote \
+              --scanners vuln \
+              --pkg-types os,library \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              --format table \
+              "${image}"
+          done
 
   manifest:
-    needs: [prep, build-arch]
+    needs: [prep, build-arch, security-gate]
     runs-on: ubuntu-latest
 
     steps:
