@@ -7,10 +7,9 @@ echo "# If u Like my Work, please Donate https://paypal.me/DeBaschdi Thank You !
 echo "###############################################################################"
 echo ""
 echo "##################################"
-echo "# Image Version 0.0.4            #"
 echo "# Running The NEW easyepg        #"
 echo "##################################"
 echo ""
 cd /easyepg && python3 -u main.py
 
-cd ${PWD}
+cd "${PWD}"
