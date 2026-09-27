@@ -1,44 +1,52 @@
 name: Build & Push to Docker Hub (multi-arch)
 
 on:
+  pull_request:
   push:
-    branches: [ "master", "main" ]
+    branches: [master, main]
   schedule:
-    - cron: "0 3 * * 1"
+    - cron: '0 3 * * 1'
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish verified images (master only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 concurrency:
-  group: dockerhub-new-easyepg-main
-  cancel-in-progress: true
-
-env:
-  REPO: docker.io/railsimulatornet/new-easyepg
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  group: easyepg-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   prep:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       date_tag: ${{ steps.vars.outputs.date_tag }}
       build_tag: ${{ steps.vars.outputs.build_tag }}
-
+      publish: ${{ steps.vars.outputs.publish }}
     steps:
-      - name: Generate tags
-        id: vars
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate pipeline and failure handling
         shell: bash
         run: |
-          DATE_TAG="$(TZ=Europe/Berlin date +%d%m%Y)"
-          BUILD_TAG="build-${GITHUB_SHA}"
-
-          echo "date_tag=${DATE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "build_tag=${BUILD_TAG}" >> "$GITHUB_OUTPUT"
-
-          echo "DATE_TAG=${DATE_TAG}"
-          echo "BUILD_TAG=${BUILD_TAG}"
+          set -Eeuo pipefail
+          for script in .github/scripts/*.sh; do bash -n "$script"; done
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Generate publication metadata
+        id: vars
+        run: python3 .github/scripts/build_metadata.py
 
   build-arch:
     needs: prep
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -46,145 +54,186 @@ jobs:
           - dockerfile: Dockerfile.amd64
             platform: linux/amd64
             suffix: amd64
+            arch: amd64
+            variant: ''
           - dockerfile: Dockerfile.arm64v8
             platform: linux/arm64
             suffix: arm64
+            arch: arm64
+            variant: ''
           - dockerfile: Dockerfile.arm32v7
             platform: linux/arm/v7
             suffix: armv7
-
+            arch: arm
+            variant: v7
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Strip legacy qemu/cross-build lines (ARM Dockerfiles)
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install image-copy tool on GitHub runner
         shell: bash
         run: |
-          for f in Dockerfile.arm64v8 Dockerfile.arm32v7; do
-            [[ -f "$f" ]] || continue
-            sed -i '/qemu-.*-static/d;/QEMU_EXECVE/d;/cross-build-start/d;/cross-build-end/d' "$f" || true
-          done
-          echo "Patched Dockerfiles (if needed)."
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build & Push ${{ matrix.platform }}
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+          mkdir -p "$RUNNER_TEMP/candidate"
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Build local candidate without registry publication
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
-          push: true
           pull: true
           no-cache: true
-          tags: |
-            ${{ env.REPO }}:${{ needs.prep.outputs.build_tag }}-${{ matrix.suffix }}
+          push: false
+          tags: easyepg:ci-${{ matrix.suffix }}
+          outputs: type=oci,dest=${{ runner.temp }}/candidate/image.tar
           provenance: mode=max
           sbom: true
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prep.outputs.build_tag }}
+      - name: Load the exact candidate for runtime tests
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          VARIANT: ${{ matrix.variant }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -Eeuo pipefail
+          options=(--override-os linux --override-arch "$ARCH")
+          if [[ -n "$VARIANT" ]]; then options+=(--override-variant "$VARIANT"); fi
+          skopeo "${options[@]}" copy "oci-archive:$RUNNER_TEMP/candidate/image.tar" "docker-daemon:easyepg:ci-$SUFFIX"
+      - name: Offline bootstrap and dependency tests
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -Eeuo pipefail
+          for ids in 99:100 1009:10; do
+            name="easyepg-smoke-${SUFFIX}-${ids/:/-}"
+            trap 'docker rm -fv "$name" >/dev/null 2>&1 || true' EXIT
+            timeout 120 docker run --rm --name "$name" --network none \
+              --platform "$PLATFORM" --security-opt no-new-privileges \
+              --tmpfs /easyepg:rw,nosuid,nodev,size=16m \
+              --tmpfs /easyepg/xml:rw,nosuid,nodev,size=8m \
+              -e UPDATE=no -e "USER_ID=${ids%:*}" -e "GROUP_ID=${ids#*:}" \
+              -e PYTHONDONTWRITEBYTECODE=1 \
+              --mount "type=bind,src=$PWD/.github/scripts/runtime-smoke.py,dst=/fixture.py,readonly" \
+              --entrypoint /bin/bash "easyepg:ci-$SUFFIX" -euc '
+                for f in /usr/local/sbin/entrypoint /usr/local/bin/easyepg.process /usr/local/bin/easyepg.update /usr/local/sbin/packages.cleanup; do
+                  test -x "$f"
+                  bash -n "$f"
+                done
+                cp /fixture.py /easyepg/main.py
+                exec /usr/local/sbin/entrypoint
+              ' | tee "$RUNNER_TEMP/runtime-${ids/:/-}.log"
+            grep -Fq 'Offline runtime, configured UID/GID and XML directory: OK' "$RUNNER_TEMP/runtime-${ids/:/-}.log"
+            docker rm -fv "$name" >/dev/null 2>&1 || true
+            trap - EXIT
+          done
+      - name: Complete Trivy report and security gate
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: bash .github/scripts/scan-image.sh "$RUNNER_TEMP/candidate/image.tar" "$PLATFORM" "$PWD/reports/$SUFFIX"
+      - name: Save scan reports
+        if: ${{ always() && hashFiles('reports/**') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: easyepg-scan-${{ matrix.suffix }}
+          path: reports/
+          retention-days: 30
+      - name: Checksum verified candidate
+        shell: bash
+        run: cd "$RUNNER_TEMP/candidate" && sha256sum image.tar > image.sha256
+      - name: Save verified candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: easyepg-candidate-${{ matrix.suffix }}
+          path: ${{ runner.temp }}/candidate/
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error
 
-  security-gate:
+  assemble:
     needs: [prep, build-arch]
     runs-on: ubuntu-latest
-    env:
-      TRIVY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      TRIVY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
-
+    timeout-minutes: 15
     steps:
-      - name: Scan all architecture candidates with Trivy
-        shell: bash
-        env:
-          REPO: ${{ env.REPO }}
-          BUILD_TAG: ${{ needs.prep.outputs.build_tag }}
-        run: |
-          set -euo pipefail
-          mkdir -p "${HOME}/.cache/trivy"
-
-          for spec in \
-            "linux/amd64 amd64" \
-            "linux/arm64 arm64" \
-            "linux/arm/v7 armv7"
-          do
-            platform="${spec%% *}"
-            suffix="${spec##* }"
-            image="${REPO}:${BUILD_TAG}-${suffix}"
-
-            echo
-            echo "============================================================"
-            echo "Security scan: ${image} (${platform})"
-            echo "============================================================"
-
-            docker run --rm \
-              -e TRIVY_USERNAME \
-              -e TRIVY_PASSWORD \
-              -v "${HOME}/.cache/trivy:/root/.cache/trivy" \
-              ghcr.io/aquasecurity/trivy:latest \
-              image \
-              --platform "${platform}" \
-              --image-src remote \
-              --scanners vuln \
-              --pkg-types os,library \
-              --severity HIGH,CRITICAL \
-              --ignore-unfixed \
-              --exit-code 1 \
-              --format table \
-              "${image}"
-          done
-
-  manifest:
-    needs: [prep, build-arch, security-gate]
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v4
+      - uses: actions/checkout@v7
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Create & Push multi-arch manifest (:date)
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: easyepg-candidate-*
+          path: ${{ runner.temp }}/candidates
+      - name: Verify and assemble all three architectures locally
         shell: bash
         run: |
-          docker buildx imagetools create \
-            -t $REPO:$DATE_TAG \
-            $REPO:$BUILD_TAG-amd64 \
-            $REPO:$BUILD_TAG-arm64 \
-            $REPO:$BUILD_TAG-armv7
+          set -Eeuo pipefail
+          args=()
+          for arch in amd64 arm64 armv7; do
+            dir="$RUNNER_TEMP/candidates/easyepg-candidate-$arch"
+            (cd "$dir" && sha256sum --check image.sha256)
+            args+=("$arch=$dir/image.tar")
+          done
+          python3 .github/scripts/image_bundle.py "$RUNNER_TEMP/verified" "${args[@]}"
+      - name: Verify registry round trip without public publication
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+          bash .github/scripts/test-transfer.sh "$RUNNER_TEMP/verified"
+      - name: Package verified OCI image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/bundle"
+          tar -C "$RUNNER_TEMP/verified" -cf "$RUNNER_TEMP/bundle/image.tar" oci-layout index.json blobs
+          (cd "$RUNNER_TEMP/bundle" && sha256sum image.tar > image.sha256)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: easyepg-verified-bundle
+          path: ${{ runner.temp }}/bundle/
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    needs: [prep, assemble]
+    if: ${{ needs.prep.outputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: easyepg-verified-bundle
+          path: ${{ runner.temp }}/bundle
+      - name: Install image-copy tool on GitHub runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+      - name: Publish verified image without rebuilding
+        shell: bash
         env:
-          REPO: ${{ env.REPO }}
-          DATE_TAG: ${{ needs.prep.outputs.date_tag }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           BUILD_TAG: ${{ needs.prep.outputs.build_tag }}
-
-      - name: Create & Push multi-arch manifest (:latest)
-        shell: bash
-        run: |
-          docker buildx imagetools create \
-            -t $REPO:latest \
-            $REPO:$BUILD_TAG-amd64 \
-            $REPO:$BUILD_TAG-arm64 \
-            $REPO:$BUILD_TAG-armv7
-        env:
-          REPO: ${{ env.REPO }}
-          BUILD_TAG: ${{ needs.prep.outputs.build_tag }}
-
-      - name: Summary
-        shell: bash
-        run: |
-          echo "Published tags:"
-          echo "  - $REPO:${DATE_TAG}"
-          echo "  - $REPO:latest"
-        env:
-          REPO: ${{ env.REPO }}
           DATE_TAG: ${{ needs.prep.outputs.date_tag }}
+        run: |
+          set -Eeuo pipefail
+          (cd "$RUNNER_TEMP/bundle" && sha256sum --check image.sha256)
+          mkdir -p "$RUNNER_TEMP/verified"
+          tar --no-same-owner --no-same-permissions -C "$RUNNER_TEMP/verified" -xf "$RUNNER_TEMP/bundle/image.tar"
+          bash .github/scripts/publish-image.sh "$RUNNER_TEMP/verified" "$BUILD_TAG" "$DATE_TAG"
