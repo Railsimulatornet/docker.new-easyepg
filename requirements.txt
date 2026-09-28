@@ -4,6 +4,6 @@ urllib3>=2.2,<3
 certifi>=2024.7
 idna>=3.20,<4
 xmltodict>=1.0.4,<2
-beautifulsoup4>=4.12,<5
+beautifulsoup4>=4.15.0,<5
 simplejson>=4.1.2,<5
 cffi>=2.1.1,<3
