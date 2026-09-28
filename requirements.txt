@@ -1,6 +1,6 @@
 bottle~=0.12.25
 requests>=2.34.2,<3
-urllib3>=2.2,<3
+urllib3>=2.8.0,<3
 certifi>=2024.7
 idna>=3.20,<4
 xmltodict>=1.0.4,<2
