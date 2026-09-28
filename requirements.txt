@@ -1,4 +1,4 @@
-bottle~=0.12.25
+bottle~=0.13.4
 requests>=2.34.2,<3
 urllib3>=2.2,<3
 certifi>=2024.7
