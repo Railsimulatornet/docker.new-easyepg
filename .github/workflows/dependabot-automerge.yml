@@ -114,10 +114,10 @@ jobs:
           else
             for file in "${FILES[@]}"; do
               case "$file" in
-                .github/workflows/dockerhub.yml)
-                  ;;
                 .github/workflows/dependency-compatibility.yml)
                   need_compat=true
+                  ;;
+                .github/workflows/*.yml|.github/workflows/*.yaml)
                   ;;
                 *)
                   echo "Unexpected file for automatic merge: $file"
