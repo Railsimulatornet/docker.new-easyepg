@@ -1,5 +1,9 @@
 # new-easyepg (Unofficial fork)
 
+[![Docker Image + Security](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dockerhub.yml/badge.svg)](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dockerhub.yml)
+[![Dependency Compatibility](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dependency-compatibility.yml/badge.svg)](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dependency-compatibility.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
 A Docker container for running the **NEW easyepg**.
 
 > **Status:** Unofficial fork of `DeBaschdi/docker.new-easyepg`, providing reliability fixes and a multi-arch image. Not affiliated with DeBaschdi/Takealug.
