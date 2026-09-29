@@ -6,13 +6,18 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      routine-actions:
-        update-types: [minor, patch]
+      actions-patch:
+        update-types: [patch]
+      actions-minor:
+        update-types: [minor]
+
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      routine-python:
-        update-types: [minor, patch]
+      python-patch:
+        update-types: [patch]
+      python-minor:
+        update-types: [minor]
