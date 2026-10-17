@@ -1,23 +1,5 @@
 #!/bin/bash
+set -Eeuo pipefail
 
-echo "Updating the NEW easyepg"
-
-PWD=$(pwd)
-rm -rf /easyepg/easyepg
-git clone https://github.com/sunsettrack4/${REPO}.git /easyepg/easyepg
-
-if [ $? -eq 0 ]; then
-  cd /easyepg/easyepg
-  git checkout ${BRANCH}
-  if [ $? -eq 0 ]; then
-    cp -R /easyepg/easyepg/* /easyepg
-    cd /easyepg
-    rm -rf /easyepg/easyepg
-
-    echo "Update done..."
-  else
-    echo "Update failed while fetching repository..."
-  fi
-else
-  echo "Update failed while cloning repository..."
-fi
+# Always validate or recover staged updates before launching the app.
+exec python3 -B /usr/local/bin/easyepg.safe_update.py "${1:-update}"

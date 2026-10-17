@@ -60,7 +60,7 @@ Die neue Image-Version enthält aktualisierte System- und Python-Abhängigkeiten
 
 Für eine erstmalige Installation mit leerem Datenordner wird `UPDATE: "yes"` benötigt. Danach kann `UPDATE: "no"` sinnvoll sein, wenn die vorhandene Anwendung unverändert weiterlaufen soll.
 
-**Vor Upstream-Updates die eigenen EasyEPG-Daten sichern.** Das bestehende Update-Skript übernimmt neue Dateien direkt; ein automatischer Funktionstest mit Rückfall auf die vorherige Version findet beim Containerstart nicht statt.
+**Upstream-Updates werden zunächst getrennt heruntergeladen und geprüft.** Programmdateien werden erst danach übernommen; bestehende Einstellungen, Cache-Dateien, XMLTV-Ausgaben und `channels.db` bleiben erhalten. Bei einem Übernahmefehler wird der vorherige Programmstand wiederhergestellt. Schlägt der Start unmittelbar nach dem Update fehl, wird einmalig die vorherige Programmfassung gestartet. Eine ältere, fehlgeschlagene Revision wird nicht bei jedem Neustart erneut installiert. Das gespeicherte `channels.db` wird absichtlich nicht automatisch durch die mitgelieferte GitHub-Datenbank ersetzt. Für Änderungen an deren Datenstruktur sind eigene Prüfungen erforderlich. **Vor Updates trotzdem eine Sicherung der EasyEPG-Nutzerdaten anlegen**, insbesondere wegen möglicher Datenbankmigrationen durch neue Anwendungsversionen.
 
 ## Einstellungen und Verzeichnisse
 

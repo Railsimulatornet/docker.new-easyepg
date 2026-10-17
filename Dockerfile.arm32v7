@@ -38,6 +38,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY root/entrypoint /usr/local/sbin/entrypoint
 COPY root/easyepg.process /usr/local/bin/easyepg.process
 COPY root/easyepg.update /usr/local/bin/easyepg.update
+COPY root/easyepg.safe_update.py /usr/local/bin/easyepg.safe_update.py
 COPY root/packages.cleanup /usr/local/sbin/packages.cleanup
 
 # CRLF -> LF, Shebangs absichern, Rechte setzen
@@ -45,7 +46,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/easyepg.process || true \
  && sed -i 's/\r$//' /usr/local/sbin/entrypoint || true \
  && grep -q '^#!' /usr/local/bin/easyepg.process || sed -i '1i #!/bin/sh' /usr/local/bin/easyepg.process \
  && grep -q '^#!' /usr/local/sbin/entrypoint     || sed -i '1i #!/bin/sh' /usr/local/sbin/entrypoint \
- && chmod 0755 /usr/local/bin/easyepg.process /usr/local/sbin/entrypoint /usr/local/bin/easyepg.update /usr/local/sbin/packages.cleanup
+ && chmod 0755 /usr/local/bin/easyepg.process /usr/local/sbin/entrypoint /usr/local/bin/easyepg.update /usr/local/bin/easyepg.safe_update.py /usr/local/sbin/packages.cleanup
 
 RUN python -c 'import bottle,requests,bs4,xmltodict,simplejson,urllib3,certifi,idna,cheroot,pytz,curl_cffi; print("Runtime deps OK:", bottle.__version__, requests.__version__)'
 

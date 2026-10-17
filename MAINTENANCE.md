@@ -10,7 +10,7 @@ Die bisherigen Image-Namen, Compose-Einstellungen, Port `4000` und Mounts `/easy
 - `DDMMYYYY`: der erste veröffentlichte Build des jeweiligen Tages, weiterhin in der Zeitzone Europe/Berlin. Bereits vorhandene Datumstags werden von diesem Workflow nicht mehr überschrieben.
 - `YYYYMMDD-build.LAUF.VERSUCH`: eindeutiger Build-Tag mit Datum und Workflow-Laufnummer, beispielsweise `20260927-build.126.1`.
 
-Es werden keine neuen öffentlichen `build-<SHA>-<Architektur>`-Kandidaten-Tags mehr angelegt. Bereits vorhandene Tags bleiben bestehen. Ein Datums-/Build-Tag fixiert das Image, nicht die unabhängig nachgeladenen EasyEPG-Skripte: `UPDATE=yes` lädt diese beim Start weiterhin aus dem eingestellten Repository und Branch.
+Es werden keine neuen öffentlichen `build-<SHA>-<Architektur>`-Kandidaten-Tags mehr angelegt. Bereits vorhandene Tags bleiben bestehen. Ein Datums-/Build-Tag fixiert das Image, nicht die unabhängig nachgeladenen EasyEPG-Skripte. Bei `UPDATE=yes` wird der Upstream-Code aus dem eingestellten Repository und Branch zunächst in einem getrennten Verzeichnis heruntergeladen und offline geprüft. Die vorherige Programmfassung wird für einen begrenzten Rückfall erhalten. Bestehende `settings.json`, `cache`, `epg.db`, XMLTV-Dateien und `resources/data/db/channels.db` werden vom Updater nicht überschrieben. Nach Änderungen am Upstream-Datenbankschema ist ein gesonderter Kompatibilitätstest erforderlich.
 
 ### Automatische Pflege
 

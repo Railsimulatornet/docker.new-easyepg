@@ -28,8 +28,9 @@ if [[ -z "${UPDATE}" ]]; then
   UPDATE='yes'
 fi
 
+/usr/local/bin/easyepg.update recover
 if [[ ! -d /easyepg ]] || [[ "${UPDATE}" = "yes" ]]; then
-  /usr/local/bin/easyepg.update
+  /usr/local/bin/easyepg.update update
 fi
 
 ln -fs /usr/share/zoneinfo/${TIMEZONE} /etc/localtime

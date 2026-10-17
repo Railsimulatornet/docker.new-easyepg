@@ -91,4 +91,38 @@ with patch.object(upstream_web, "init_config"), patch.object(upstream_web, "run"
 
 print("Offline upstream imports, curl-cffi native library, Cheroot and curl: OK")
 
+# Test the actual updater against the pinned upstream source without network access.
+import hashlib
+import sqlite3
+from importlib.util import module_from_spec, spec_from_file_location
+
+fixture = Path("/easyepg/main.py")
+original_fixture = fixture.read_bytes()
+local_settings = Path("/easyepg/settings.json")
+local_settings.write_text('{"fixture":"keep"}', encoding="utf-8")
+
+local_db = Path("/easyepg/resources/data/db/channels.db")
+local_db.parent.mkdir(parents=True, exist_ok=True)
+with sqlite3.connect(local_db) as connection:
+    connection.execute("CREATE TABLE channels (channel_id TEXT, channel_name TEXT, provider_name TEXT, provider_id TEXT, country TEXT, config TEXT)")
+    connection.execute("INSERT INTO channels (channel_id) VALUES ('local-user-data')")
+before_db = hashlib.sha256(local_db.read_bytes()).hexdigest()
+
+safe_spec = spec_from_file_location(
+    "easyepg_safe_update", "/usr/local/bin/easyepg.safe_update.py"
+)
+safe_module = module_from_spec(safe_spec)
+safe_spec.loader.exec_module(safe_module)
+safe_updater = safe_module.Updater("/easyepg")
+assert safe_updater.apply(source, "ci-pinned-upstream", runtime=True)
+assert fixture.read_bytes() == (source / "main.py").read_bytes()
+assert local_settings.read_text() == '{"fixture":"keep"}'
+assert hashlib.sha256(local_db.read_bytes()).hexdigest() == before_db
+assert Path("/easyepg/xml/fixture.xml").read_text() == "<tv/>\n"
+assert safe_updater.rollback_recent()
+assert fixture.read_bytes() == original_fixture
+assert local_settings.read_text() == '{"fixture":"keep"}'
+assert hashlib.sha256(local_db.read_bytes()).hexdigest() == before_db
+print("Offline staged update, local DB preservation and rollback: OK")
+
 print("Offline runtime, configured UID/GID and XML directory: OK")
