@@ -16,6 +16,7 @@ import time
 import traceback
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 import requests
@@ -43,6 +44,14 @@ def load_provider():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.datetime = FixedDateTime
+    return module
+
+
+def load_xmlcache():
+    path = SOURCE / 'resources/lib/xmlcache.py'
+    spec = importlib.util.spec_from_file_location('xmlcache_under_test', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     return module
 
 
@@ -105,6 +114,45 @@ class XMLCompatibility(unittest.TestCase):
         self.assertEqual(result[0]['credits']['actor'], ['Darsteller', 'Besetzung'])
         self.assertEqual(result[0]['season_episode_num'], {'season': 2, 'episode': 3})
         OBSERVATIONS['programmes'] = result
+
+    def test_empty_xmltv(self):
+        self.assertEqual(
+            self.provider.epg_main_converter('<tv/>', {}, ['one'], {'days': '2'}), []
+        )
+
+    def test_xmlcache_bom_query_and_timeout(self):
+        # Exercise the actual upstream XML cache offline, without provider traffic.
+        cache = load_xmlcache()
+        sample = b'\xef\xbb\xbf<?xml version="1.0" encoding="UTF-8"?><tv/>'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'fixture.xml'
+            target = root / 'cache.xml'
+            source.write_bytes(sample)
+            self.assertEqual(cache.arrange_path('file://' + str(source), str(target)),
+                             (True, str(target)))
+            self.assertEqual(target.read_bytes(), sample)
+
+            # An empty cached file must be replaced, and URL query arguments
+            # must not hide the XML file extension or bypass the HTTP timeout.
+            target.write_bytes(b'')
+            url = 'https://example.invalid/epg.xml?token=synthetic'
+            with patch.object(cache.requests, 'get',
+                              return_value=SimpleNamespace(content=sample)) as get:
+                self.assertEqual(cache.arrange_path(url, str(target)),
+                                 (True, str(target)))
+                get.assert_called_once_with(url, timeout=5)
+            self.assertEqual(target.read_bytes(), sample)
+
+            target.unlink()
+            compressed = gzip.compress(sample)
+            gzip_url = 'https://example.invalid/epg.xml.gz?token=synthetic'
+            with patch.object(cache.requests, 'get',
+                              return_value=SimpleNamespace(content=compressed)) as get:
+                self.assertEqual(cache.arrange_path(gzip_url, str(target)),
+                                 (True, str(target)))
+                get.assert_called_once_with(gzip_url, timeout=5)
+            self.assertEqual(target.read_bytes(), sample)
 
     def test_original_grabber_export(self):
         double = lambda obj: json.dumps(json.dumps(obj, ensure_ascii=False))
