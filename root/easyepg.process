@@ -8,8 +8,9 @@ cd /easyepg || exit 1
 started=$(date +%s)
 if python3 -u main.py; then
   exit 0
+else
+  status=$?
 fi
-status=$?
 elapsed=$(( $(date +%s) - started ))
 if [[ "$status" -ne 130 && "$status" -ne 143 && "$elapsed" -le 90 ]]; then
   if /usr/local/bin/easyepg.update rollback-recent; then
