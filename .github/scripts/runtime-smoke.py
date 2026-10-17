@@ -104,8 +104,8 @@ local_settings.write_text('{"fixture":"keep"}', encoding="utf-8")
 local_db = Path("/easyepg/resources/data/db/channels.db")
 local_db.parent.mkdir(parents=True, exist_ok=True)
 with sqlite3.connect(local_db) as connection:
-    connection.execute("CREATE TABLE channels (name TEXT)")
-    connection.execute("INSERT INTO channels VALUES ('local-user-data')")
+    connection.execute("CREATE TABLE channels (channel_id TEXT, channel_name TEXT, provider_name TEXT, provider_id TEXT, country TEXT, config TEXT)")
+    connection.execute("INSERT INTO channels (channel_id) VALUES ('local-user-data')")
 before_db = hashlib.sha256(local_db.read_bytes()).hexdigest()
 
 safe_spec = spec_from_file_location(
