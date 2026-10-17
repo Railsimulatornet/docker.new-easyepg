@@ -1,106 +1,29 @@
-# new-easyepg (Unofficial fork)
+# EasyEPG Docker
 
-[![Docker Image + Security](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dockerhub.yml/badge.svg)](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dockerhub.yml)
-[![Dependency Compatibility](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dependency-compatibility.yml/badge.svg)](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dependency-compatibility.yml)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Docker-Build und Sicherheitsprüfung](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dockerhub.yml/badge.svg)](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dockerhub.yml)
+[![XML-/JSON-Kompatibilität](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dependency-compatibility.yml/badge.svg)](https://github.com/Railsimulatornet/docker.new-easyepg/actions/workflows/dependency-compatibility.yml)
 
-A Docker container for running the **NEW easyepg**.
+Docker-Image für [EasyEPG lite](https://github.com/sunsettrack4/script.service.easyepg-lite). Das Image wird als inoffizieller Fork gepflegt und bietet aktuelle Laufzeit-Abhängigkeiten sowie Builds für AMD64, ARM64 und ARMv7.
 
-> **Status:** Unofficial fork of `DeBaschdi/docker.new-easyepg`, providing reliability fixes and a multi-arch image. Not affiliated with DeBaschdi/Takealug.
+- **Docker Hub:** [railsimulatornet/new-easyepg](https://hub.docker.com/r/railsimulatornet/new-easyepg)
+- **Image:** `railsimulatornet/new-easyepg:latest`
+- **Weboberfläche:** Port `4000`
+- **Docker-Fork und Anpassungen:** Copyright (c) 2026 Roman Glos
 
----
+Die EasyEPG-Anwendung stammt aus dem Originalprojekt von Jan-Luca Neumann. Grundlage des Docker-Forks ist [DeBaschdi/docker.new-easyepg](https://github.com/DeBaschdi/docker.new-easyepg). Dieses Repository ist kein offizielles Projekt der ursprünglichen Entwickler.
 
-## 🇩🇪 Kurzüberblick
+## Installation auf UGREEN NAS oder anderen Docker-Hosts
 
-- **Fixes:** `beautifulsoup4` (bs4) wird im Image installiert. Startskripte sind mit korrekten Rechten und Zeilenenden hinterlegt.
-- **Builds:** Multi-Arch Manifeste für **amd64 / arm64 / armv7**.
-- **Images:** Veröffentlichung auf Docker Hub als `latest` sowie mit Datums-Tags im Format **DDMMYYYY** wie zum Beispiel `20042026`.
-
----
-
-## What’s changed vs. upstream
-
-- ✅ **Fix:** add `beautifulsoup4` (bs4), required by providers such as `zttch.py`
-- ✅ **Fix:** normalize line endings (LF), ensure shebangs and `0755` for startup scripts
-  - `/usr/local/bin/easyepg.process`
-  - `/usr/local/sbin/entrypoint`
-- ✅ **Clean:** remove legacy `qemu-*-static` cross-build remnants, because Buildx/QEMU handles emulation cleanly
-- ✅ **Publish:** multi-arch manifests for **amd64 / arm64 / armv7**
-
----
-
-## Tags
-
-The image is published under the following public tags:
-
-- `railsimulatornet/new-easyepg:latest`
-  - moving tag that always points to the newest published multi-arch image
-- `railsimulatornet/new-easyepg:DDMMYYYY`
-  - date-based release tag, for example `railsimulatornet/new-easyepg:20042026`
-
-### Recommended usage
-
-- Use **`latest`** if you want to stay on the newest published image
-- Use a **date tag** if you want to pin a specific known-good release for reproducible deployments or rollback scenarios
-
----
-
-## Quick start (docker run)
-
-### Use the newest image
-
-```bash
-docker run -d \
-  --name new-easyepg \
-  -p 4000:4000 \
-  -e TZ=Europe/Berlin \
-  -e USER_ID="1009" \
-  -e GROUP_ID="10" \
-  -e TIMEZONE="Europe/Berlin" \
-  -e UPDATE="yes" \
-  -e REPO="script.service.easyepg-lite" \
-  -e BRANCH="main" \
-  -v /path/on/host/easyepg:/easyepg \
-  -v /path/on/host/easyepg_xml:/easyepg/xml \
-  --restart unless-stopped \
-  railsimulatornet/new-easyepg:latest
-```
-
-### Use a fixed dated release
-
-```bash
-docker run -d \
-  --name new-easyepg \
-  -p 4000:4000 \
-  -e TZ=Europe/Berlin \
-  -e USER_ID="1009" \
-  -e GROUP_ID="10" \
-  -e TIMEZONE="Europe/Berlin" \
-  -e UPDATE="yes" \
-  -e REPO="script.service.easyepg-lite" \
-  -e BRANCH="main" \
-  -v /path/on/host/easyepg:/easyepg \
-  -v /path/on/host/easyepg_xml:/easyepg/xml \
-  --restart unless-stopped \
-  railsimulatornet/new-easyepg:20042026
-```
-
----
-
-## docker-compose
-
-### Track the newest published image
+Die Host-Pfade im folgenden Beispiel bitte an die eigene Installation anpassen. Beim ersten Start lädt `UPDATE: "yes"` den EasyEPG-Anwendungscode von GitHub herunter.
 
 ```yaml
 services:
   easyepg:
     image: railsimulatornet/new-easyepg:latest
     container_name: new-easyepg
-    restart: unless-stopped
     ports:
       - "4000:4000"
     environment:
-      TZ: Europe/Berlin
       USER_ID: "1009"
       GROUP_ID: "10"
       TIMEZONE: Europe/Berlin
@@ -108,170 +31,88 @@ services:
       REPO: script.service.easyepg-lite
       BRANCH: main
     volumes:
-      - /path/on/host/easyepg:/easyepg
-      - /path/on/host/easyepg_xml:/easyepg/xml
-```
-
-### Pin a fixed dated release
-
-```yaml
-services:
-  easyepg:
-    image: railsimulatornet/new-easyepg:20042026
-    container_name: new-easyepg
+      - /volume2/docker/easyepg/data:/easyepg
+      - /volume2/docker/easyepg/xml:/easyepg/xml
     restart: unless-stopped
-    ports:
-      - "4000:4000"
-    environment:
-      TZ: Europe/Berlin
-      USER_ID: "1009"
-      GROUP_ID: "10"
-      TIMEZONE: Europe/Berlin
-      UPDATE: "yes"
-      REPO: script.service.easyepg-lite
-      BRANCH: main
-    volumes:
-      - /path/on/host/easyepg:/easyepg
-      - /path/on/host/easyepg_xml:/easyepg/xml
 ```
 
-> **Note:** Replace the example host paths with real absolute paths and ensure permissions match the provided `USER_ID` and `GROUP_ID`.
+Nach der Bereitstellung ist die Oberfläche unter `http://NAS-IP:4000` erreichbar. Port `4000` nicht ohne zusätzliche Absicherung direkt im Internet freigeben.
 
----
+**Bestehende Installation:** Eigene Host-Pfade, Konfiguration und XMLTV-Dateien beibehalten. Ein erneutes Bereitstellen des Containers darf diese Daten nicht durch leere Verzeichnisse ersetzen.
 
-## Example paths (Synology / UGREEN)
+## Zwei verschiedene Arten von Updates
 
-```yaml
-volumes:
-  - /volume2/docker/embyserver/takealug_new-easyepg/easyepg:/easyepg
-  - /volume2/docker/embyserver/takealug_new-easyepg/easyepg_xml:/easyepg/xml
+**Docker-Image aktualisieren:** `latest` verweist auf den neuesten veröffentlichten und geprüften Image-Build. Ein neues Image auf Docker Hub aktualisiert aber keinen bereits laufenden Container. Für eine bestehende Compose-Installation:
+
+```bash
+docker compose pull easyepg
+docker compose up -d easyepg
 ```
 
----
+Die neue Image-Version enthält aktualisierte System- und Python-Abhängigkeiten. Sie ersetzt nicht automatisch den unter `/easyepg` gespeicherten EasyEPG-Anwendungscode.
 
-## Environment variables
+**EasyEPG-Anwendung aktualisieren:** Das steuert `UPDATE` unabhängig vom Docker-Image:
 
-| Variable   | Type   | Default                    | Description |
-|------------|--------|----------------------------|-------------|
-| `USER_ID`  | int    | `99`                       | UID to run easyepg as |
-| `GROUP_ID` | int    | `100`                      | GID to run easyepg as |
-| `TIMEZONE` | string | `Europe/Berlin`            | Container timezone |
-| `REPO`     | string | `script.service.easyepg-lite` | Git repo to clone (user `sunsettrack4`) |
-| `BRANCH`   | string | `main`                     | Branch to clone |
-| `UPDATE`   | yes/no | `yes`                      | Update easyepg scripts on each start |
+| Einstellung | Verhalten |
+|---|---|
+| `UPDATE: "yes"` | Lädt beim Containerstart den aktuellen Code aus `sunsettrack4/script.service.easyepg-lite`, Branch `main`, und kopiert ihn in `/easyepg`. |
+| `UPDATE: "no"` | Verwendet den bereits vorhandenen Code aus `/easyepg` und lädt beim Start nichts neu herunter. |
 
----
+Für eine erstmalige Installation mit leerem Datenordner wird `UPDATE: "yes"` benötigt. Danach kann `UPDATE: "no"` sinnvoll sein, wenn die vorhandene Anwendung unverändert weiterlaufen soll.
 
-## Ports
+**Vor Upstream-Updates die eigenen EasyEPG-Daten sichern.** Das bestehende Update-Skript übernimmt neue Dateien direkt; ein automatischer Funktionstest mit Rückfall auf die vorherige Version findet beim Containerstart nicht statt.
 
-| Host → Container | Purpose |
-|------------------|---------|
-| `4000:4000`      | easyepg web interface |
+## Einstellungen und Verzeichnisse
 
----
+| Variable | Vorgabe | Bedeutung |
+|---|---|---|
+| `USER_ID` | `99` | Benutzerkennung für den EasyEPG-Prozess |
+| `GROUP_ID` | `100` | Gruppenzugehörigkeit für Dateien und Prozess |
+| `TIMEZONE` | `Europe/Berlin` | Zeitzone des Containers |
+| `UPDATE` | `yes` | EasyEPG-Code beim Start aktualisieren |
+| `REPO` | `script.service.easyepg-lite` | Anwendungsrepository unter `sunsettrack4` |
+| `BRANCH` | `main` | Upstream-Branch |
 
-## Volumes
+Die Mounts `/easyepg` und `/easyepg/xml` speichern den Anwendungscode, Einstellungen und erzeugte XMLTV-Dateien dauerhaft. Der Container benötigt Schreibrechte auf diesen Verzeichnissen. Die Beispiel-UID/GID `1009:10` gegebenenfalls an die eigenen Berechtigungen anpassen.
 
-| Mount          | Required | Description |
-|----------------|----------|-------------|
-| `/easyepg`     | yes      | Persist easyepg program files |
-| `/easyepg/xml` | yes      | Persist the generated XML file |
+## Image-Tags
 
----
+| Tag | Bedeutung |
+|---|---|
+| `latest` | Neuester veröffentlichter Multi-Arch-Build |
+| `DDMMYYYY` | Erster veröffentlichter Build dieses Tages, z. B. `17102026`; bestehende Datumstags werden nicht überschrieben |
+| `YYYYMMDD-build.LAUF.VERSUCH` | Eindeutig zuordenbarer Build, z. B. `20261017-build.167.1` |
 
-## Build & CI
+Verfügbar für `linux/amd64`, `linux/arm64` und `linux/arm/v7`. Neue Builds werden vor der Veröffentlichung auf allen drei Architekturen getestet und mit Trivy geprüft. Ein erfolgreicher Scan bedeutet nicht, dass es keine noch ungepatchten Schwachstellen gibt.
 
-This repository builds **multi-arch** images for:
+Weitere Einzelheiten zum Build- und Sicherheitsworkflow stehen in [MAINTENANCE.md](MAINTENANCE.md).
 
-- `linux/amd64`
-- `linux/arm64`
-- `linux/arm/v7`
+## Bei Problemen
 
-The CI publishes the image to Docker Hub as:
-
-- `latest`
-- a **date-based tag** in the format `DDMMYYYY`
-
-### Publishing behavior
-
-- Pushes to `main` update `latest`
-- Scheduled or manual builds also publish `latest`
-- Each published build additionally creates a dated release tag such as `20042026`
-
-### Why date tags?
-
-Date tags make it easy to:
-
-- pin a known-good release
-- roll back quickly
-- identify when an image was published at a glance
-
-### To reuse this setup
-
-1. Create a Docker Hub **Access Token**
-2. Add these GitHub repository secrets:
-   - `DOCKERHUB_USERNAME`
-   - `DOCKERHUB_TOKEN`
-3. Run the GitHub Actions workflow by:
-   - pushing to `main`
-   - running it manually
-   - or waiting for the scheduled run
-
----
-
-## Update note for WUD users
-
-If you use **What's Up Docker (WUD)** with `latest`, digest-based watching is recommended for this container.
-
-Reason:
-
-- `latest` is a moving tag
-- date tags like `20042026` are not SemVer tags
-- digest watching is the most reliable way to detect updates for moving Docker tags
-
-If you prefer fixed and reproducible deployments, use a dated tag instead of `latest`.
-
----
-
-## OCI Image Labels
-
-Add these labels to your Dockerfiles to improve traceability:
-
-```dockerfile
-LABEL org.opencontainers.image.title="new-easyepg (Unofficial fork)" \
-      org.opencontainers.image.description="NEW EasyEPG with bs4 + permissions fixes; multi-arch" \
-      org.opencontainers.image.source="https://github.com/Railsimulatornet/docker.new-easyepg" \
-      org.opencontainers.image.url="https://hub.docker.com/r/railsimulatornet/new-easyepg" \
-      org.opencontainers.image.licenses="GPL-3.0-only"
-
-COPY LICENSE /usr/share/licenses/GPL-3.0.txt
+```bash
+docker logs --tail 100 new-easyepg
+docker inspect --format '{{.Config.Image}}' new-easyepg
 ```
 
-> If needed, you can also embed the Git commit SHA in CI for additional traceability.
+Wenn eine frische Installation mit `UPDATE: "no"` nicht startet, prüfen, ob in `/easyepg` bereits der Anwendungscode vorhanden ist. Bei fehlenden Dateien zuerst die Mounts und Berechtigungen kontrollieren. Nicht die produktiven EPG-Daten löschen, nur um einen Startfehler zu beheben.
+
+## Herkunft, Lizenz und Copyright
+
+- **Docker-Fork und eigene Anpassungen:** Copyright (c) 2026 Roman Glos
+- **EasyEPG-Anwendung:** [Jan-Luca Neumann / sunsettrack4](https://github.com/sunsettrack4/script.service.easyepg-lite)
+- **Ursprüngliche Docker-Vorlage:** [DeBaschdi/docker.new-easyepg](https://github.com/DeBaschdi/docker.new-easyepg)
+- **Lizenz des Docker-Forks:** [GNU GPL v3](LICENSE)
+
+Die Rechte und Urheberhinweise der ursprünglichen Projekte bleiben bestehen. EasyEPG und die verwendeten EPG-Datenquellen gehören den jeweiligen Rechteinhabern.
 
 ---
 
-## License
+## English
 
-This repository is a fork of **DeBaschdi/docker.new-easyepg**. Unless noted otherwise, code is licensed under **GNU GPL-3.0**.
+This is an unofficial, maintained Docker fork for [EasyEPG lite](https://github.com/sunsettrack4/script.service.easyepg-lite), published as `railsimulatornet/new-easyepg:latest` for AMD64, ARM64 and ARMv7. Use the Compose example above and replace the host paths and UID/GID with your own values.
 
-```text
-SPDX-License-Identifier: GPL-3.0-only
-```
-
-- Upstream: <https://github.com/DeBaschdi/docker.new-easyepg>
-- Fork: <https://github.com/Railsimulatornet/docker.new-easyepg>
-- A copy of the license should be present in `LICENSE` and is copied into the image at `/usr/share/licenses/GPL-3.0.txt`.
-
-### Trademark & data usage
-
-“EasyEPG” and third-party names or logos belong to their respective owners.
-
-This project provides containerization only. Ensure your use of EPG and data sources complies with the respective providers’ terms.
-
----
-
-## Credits
-
-- Original work: DeBaschdi/docker.new-easyepg
-- Community and contributors
+- **Web UI:** `http://NAS-IP:4000`. Do not expose the web interface directly to the internet.
+- **Image update:** Run `docker compose pull easyepg` followed by `docker compose up -d easyepg` to use the latest published image.
+- **Upstream source:** `UPDATE=yes` downloads the EasyEPG application on startup; `UPDATE=no` uses the existing files in `/easyepg`. For a new, empty installation start with `UPDATE=yes`.
+- **Backups:** Back up your EasyEPG data before updating upstream application files. Startup updates do not have an automatic rollback.
+- **Credits:** Docker modifications Copyright (c) 2026 Roman Glos. EasyEPG originates from Jan-Luca Neumann; the Docker fork is based on DeBaschdi's work. Original attribution and GPL terms remain in force.
