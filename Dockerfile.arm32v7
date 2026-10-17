@@ -12,7 +12,7 @@ ENV USER_ID="99" \
 RUN set -eux; \
     apt-get update; \
     apt-get -y upgrade; \
-    apt-get install -y --no-install-recommends git ca-certificates tzdata libffi8; \
+    apt-get install -y --no-install-recommends git curl ca-certificates tzdata libffi8; \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt
@@ -20,7 +20,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential libffi-dev \
  && python -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
- && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt \
+ && /opt/venv/bin/pip install --no-cache-dir --only-binary=curl-cffi -r /tmp/requirements.txt \
  && /opt/venv/bin/pip check \
  && /opt/venv/bin/pip uninstall --yes setuptools wheel \
  && /opt/venv/bin/pip uninstall --yes pip \
@@ -47,7 +47,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/easyepg.process || true \
  && grep -q '^#!' /usr/local/sbin/entrypoint     || sed -i '1i #!/bin/sh' /usr/local/sbin/entrypoint \
  && chmod 0755 /usr/local/bin/easyepg.process /usr/local/sbin/entrypoint /usr/local/bin/easyepg.update /usr/local/sbin/packages.cleanup
 
-RUN python -c 'import bottle,requests,bs4,xmltodict,simplejson,urllib3,certifi,idna; print("Runtime deps OK:", bottle.__version__, requests.__version__)'
+RUN python -c 'import bottle,requests,bs4,xmltodict,simplejson,urllib3,certifi,idna,cheroot,pytz,curl_cffi; print("Runtime deps OK:", bottle.__version__, requests.__version__)'
 
 LABEL org.opencontainers.image.title="new-easyepg (Unofficial fork)" \
       org.opencontainers.image.description="NEW EasyEPG on Python 3.12-slim with venv + patch-ranged Python deps; multi-arch" \
