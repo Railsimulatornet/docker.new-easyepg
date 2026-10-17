@@ -159,6 +159,26 @@ def validate_source(source, files, runtime=True):
                               result.stderr.strip()[-650:])
 
 
+def validate_local_channel_db(path):
+    """Refuse incompatible or damaged local SQLite databases before changing code."""
+    if not path.is_file() or path.is_symlink():
+        raise UpdateError("Local channel database is not a regular file")
+    required = {
+        "channel_id", "channel_name", "provider_name",
+        "provider_id", "country", "config",
+    }
+    try:
+        with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as db:
+            if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise UpdateError("Existing channel database failed integrity check")
+            columns = {column[1] for column in db.execute("PRAGMA table_info(channels)")}
+            if not required.issubset(columns):
+                raise UpdateError("Existing channel database schema needs review")
+    except sqlite3.DatabaseError as error:
+        raise UpdateError("Existing channel database is invalid") from error
+
+
+
 class Updater:
     def __init__(self, root):
         self.root = Path(root)
@@ -262,7 +282,10 @@ class Updater:
 
         old_managed = set(current.get("files", [])) if current else set()
         removed = {f for f in old_managed - set(files) if managed_file(f)}
-        db_is_new = not (self.root / DATABASE).exists()
+        db_path = self.target(DATABASE)
+        db_is_new = not db_path.exists()
+        if not db_is_new:
+            validate_local_channel_db(db_path)
         touched = sorted(set(files) | removed | ({DATABASE} if db_is_new else set()))
         for rel in touched:
             self.target(rel)
