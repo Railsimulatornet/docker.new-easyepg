@@ -106,6 +106,13 @@ jobs:
           options=(--override-os linux --override-arch "$ARCH")
           if [[ -n "$VARIANT" ]]; then options+=(--override-variant "$VARIANT"); fi
           skopeo "${options[@]}" copy "oci-archive:$RUNNER_TEMP/candidate/image.tar" "docker-daemon:easyepg:ci-$SUFFIX"
+      - name: Checkout vetted EasyEPG upstream source for offline runtime checks
+        uses: actions/checkout@v7
+        with:
+          repository: sunsettrack4/script.service.easyepg-lite
+          ref: 49bdfe5400e8cdadcd9df1f4245263080f7c30ab
+          path: _upstream_runtime_test
+          persist-credentials: false
       - name: Offline bootstrap and dependency tests
         shell: bash
         env:
@@ -121,8 +128,9 @@ jobs:
               --tmpfs /easyepg:rw,nosuid,nodev,size=16m \
               --tmpfs /easyepg/xml:rw,nosuid,nodev,size=8m \
               -e UPDATE=no -e "USER_ID=${ids%:*}" -e "GROUP_ID=${ids#*:}" \
-              -e PYTHONDONTWRITEBYTECODE=1 \
+              -e PYTHONDONTWRITEBYTECODE=1 -e EASYEPG_UPSTREAM_SOURCE=/source \
               --mount "type=bind,src=$PWD/.github/scripts/runtime-smoke.py,dst=/fixture.py,readonly" \
+              --mount "type=bind,src=$PWD/_upstream_runtime_test,dst=/source,readonly" \
               --entrypoint /bin/bash "easyepg:ci-$SUFFIX" -euc '
                 for f in /usr/local/sbin/entrypoint /usr/local/bin/easyepg.process /usr/local/bin/easyepg.update /usr/local/sbin/packages.cleanup; do
                   test -x "$f"
