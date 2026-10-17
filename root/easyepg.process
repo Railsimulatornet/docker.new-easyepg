@@ -2,13 +2,7 @@
 
 PWD=$(pwd)
 echo ""
-echo "###############################################################################"
-echo "# If u Like my Work, please Donate https://paypal.me/DeBaschdi Thank You ! :) #"
-echo "###############################################################################"
-echo ""
-echo "##################################"
-echo "# Running The NEW easyepg        #"
-echo "##################################"
+echo "EasyEPG Docker - Copyright (c) 2026 Roman Glos"
 echo ""
 cd /easyepg && python3 -u main.py
 
