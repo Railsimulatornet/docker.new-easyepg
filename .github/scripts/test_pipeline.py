@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from build_metadata import metadata
+from build_metadata import main as build_metadata_main, metadata
 from check_scan import check
 from image_bundle import encode, digest, merge, INDEX, MANIFEST, EXPECTED
 
@@ -59,6 +59,45 @@ class MetadataTests(unittest.TestCase):
     def test_invalid_run_is_rejected(self):
         with self.assertRaises(ValueError):
             self.value(GITHUB_RUN_NUMBER="../bad")
+
+    def test_main_writes_only_validated_outputs_without_logging(self):
+        marker = "sensitive-canary-never-log"
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / "event.json"
+            output = Path(tmp) / "github-output"
+            event.write_text(json.dumps({"inputs": {"publish": "true", "secret": marker}}))
+            env = self.env | {
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_EVENT_PATH": str(event),
+                "GITHUB_OUTPUT": str(output),
+                "DOCKERHUB_TOKEN": marker,
+            }
+            with patch.dict(os.environ, env, clear=True):
+                with patch("sys.stdout", new_callable=io.StringIO) as logged:
+                    build_metadata_main()
+            lines = output.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(logged.getvalue(), "")
+            self.assertEqual(len(lines), 3)
+            self.assertRegex(lines[0], r"^build_tag=[0-9]{8}-build\.126\.1$")
+            self.assertRegex(lines[1], r"^date_tag=[0-9]{8}$")
+            self.assertEqual(lines[2], "publish=true")
+            self.assertNotIn(marker, output.read_text(encoding="utf-8"))
+
+    def test_main_rejects_untrusted_run_number_without_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / "event.json"
+            output = Path(tmp) / "github-output"
+            event.write_text(json.dumps({"inputs": {"publish": True}}))
+            env = self.env | {
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_EVENT_PATH": str(event),
+                "GITHUB_OUTPUT": str(output),
+                "GITHUB_RUN_NUMBER": "126\nDOCKERHUB_TOKEN=secret",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                with self.assertRaises(ValueError):
+                    build_metadata_main()
+            self.assertFalse(output.exists())
 
 
 class ScanReportTests(unittest.TestCase):

@@ -16,6 +16,9 @@ def metadata(env, event, changed=()):
     attempt = env["GITHUB_RUN_ATTEMPT"]
     if not all(re.fullmatch(r"[1-9][0-9]*", v) for v in (run, attempt)):
         raise ValueError("Invalid workflow run number/attempt")
+    # Convert validated GitHub counters to integers so arbitrary environment
+    # strings cannot appear in generated tags or workflow outputs.
+    run, attempt = int(run), int(attempt)
     now = dt.datetime.now(ZoneInfo("Europe/Berlin"))
     trusted = (env.get("GITHUB_REPOSITORY") == REPOSITORY
                and env.get("GITHUB_REF") == "refs/heads/master")
@@ -39,10 +42,17 @@ def main():
         if before != "0" * 40:
             changed = subprocess.check_output(["git", "diff", "--name-only", before, after], text=True).splitlines()
     values = metadata(os.environ, event, changed)
+    # GitHub Actions consumes these three non-secret values through GITHUB_OUTPUT.
+    # Never duplicate environment-derived metadata in the public runner log.
+    build_tag = values["build_tag"]
+    date_tag = values["date_tag"]
+    publish = values["publish"]
+    if (not re.fullmatch(r"[0-9]{8}-build\.[1-9][0-9]*\.[1-9][0-9]*", build_tag)
+            or not re.fullmatch(r"[0-9]{8}", date_tag)
+            or publish not in ("true", "false")):
+        raise ValueError("Invalid publication metadata")
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-        for key, value in values.items():
-            print(f"{key}={value}", file=out)
-            print(f"{key}={value}")
+        out.write(f"build_tag={build_tag}\ndate_tag={date_tag}\npublish={publish}\n")
 
 
 if __name__ == "__main__":
