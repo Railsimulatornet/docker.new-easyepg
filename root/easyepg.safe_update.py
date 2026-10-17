@@ -89,8 +89,12 @@ def manifest_for(source):
             files.append(rel)
     if not 2 <= len(files) <= MAX_FILES or total > MAX_BYTES:
         raise UpdateError("Unexpected upstream size or file count")
-    if "main.py" not in files or "requirements.txt" not in files:
-        raise UpdateError("Upstream does not provide the required entrypoint")
+    required = {
+        "main.py", "requirements.txt",
+        "resources/lib/db.py", "resources/lib/epg.py", "resources/lib/web.py",
+    }
+    if not required.issubset(files):
+        raise UpdateError("Upstream does not provide the required application modules")
     if not (source / DATABASE).is_file():
         raise UpdateError("Upstream channel database missing")
     return sorted(files)
@@ -141,22 +145,9 @@ def validate_source(source, files, runtime=True):
 
     if runtime:
         validate_requirements(source)
-        check = (
-            "import importlib, sys; "
-            "sys.path.insert(0, sys.argv[1]); "
-            "from resources.lib import db, epg, web; "
-            "[importlib.import_module('resources.lib.providers.' + x) "
-            "for x in ('canal','cpsol','tkmde','tvmat','tvspf','zttch')]; "
-            "print('EasyEPG staged imports OK')"
-        )
-        result = subprocess.run(
-            [sys.executable, "-B", "-c", check, str(source)],
-            cwd=source, text=True, capture_output=True, timeout=45,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
-        if result.returncode != 0:
-            raise UpdateError("New EasyEPG code failed runtime imports: " +
-                              result.stderr.strip()[-650:])
+        # SECURITY: never import or execute downloaded Upstream Python here.
+        # This updater runs as root. The normal entrypoint drops to USER_ID/GROUP_ID
+        # before starting EasyEPG, where the startup rollback can handle failures.
 
 
 def validate_local_channel_db(path):
