@@ -1,9 +1,20 @@
 #!/bin/bash
+set -u
 
-PWD=$(pwd)
 echo ""
 echo "EasyEPG Docker - Copyright (c) 2026 Roman Glos"
 echo ""
-cd /easyepg && python3 -u main.py
-
-cd "${PWD}"
+cd /easyepg || exit 1
+started=$(date +%s)
+if python3 -u main.py; then
+  exit 0
+fi
+status=$?
+elapsed=$(( $(date +%s) - started ))
+if [[ "$status" -ne 130 && "$status" -ne 143 && "$elapsed" -le 90 ]]; then
+  if /usr/local/bin/easyepg.update rollback-recent; then
+    echo "EasyEPG startup failed; previous application code restored."
+    exec python3 -u main.py
+  fi
+fi
+exit "$status"
