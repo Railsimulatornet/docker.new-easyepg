@@ -17,13 +17,13 @@ spec.loader.exec_module(updater)
 def create_db(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as db:
-        db.execute("CREATE TABLE channels (id TEXT)")
-        db.execute("INSERT INTO channels (id) VALUES (?)", (value,))
+        db.execute("CREATE TABLE channels (channel_id TEXT, channel_name TEXT, provider_name TEXT, provider_id TEXT, country TEXT, config TEXT)")
+        db.execute("INSERT INTO channels (channel_id) VALUES (?)", (value,))
 
 
 def read_db(path):
     with sqlite3.connect(path) as db:
-        return db.execute("SELECT id FROM channels").fetchone()[0]
+        return db.execute("SELECT channel_id FROM channels").fetchone()[0]
 
 
 class UpdaterTests(unittest.TestCase):
@@ -117,6 +117,57 @@ class UpdaterTests(unittest.TestCase):
         with patch.object(u, "install", side_effect=flaky):
             with self.assertRaises(OSError):
                 u.apply(self.source, "revision-a", runtime=False)
+        self.assertEqual((self.root / "main.py").read_text(), 'print("old")\n')
+        self.data_unchanged()
+        self.assertFalse((u.state / "transaction").exists())
+
+
+    def test_rejects_incompatible_local_database_schema(self):
+        self.populate_old()
+        db = self.root / updater.DATABASE
+        db.unlink()
+        with sqlite3.connect(db) as con:
+            con.execute("CREATE TABLE channels (id TEXT)")
+            con.execute("INSERT INTO channels VALUES ('untouched')")
+        u = updater.Updater(self.root)
+        with self.assertRaisesRegex(updater.UpdateError, "schema needs review"):
+            u.apply(self.source, "revision-a", runtime=False)
+        self.assertEqual((self.root / "main.py").read_text(), 'print("old")\n')
+        with sqlite3.connect(db) as con:
+            self.assertEqual(con.execute("SELECT id FROM channels").fetchone()[0],
+                             "untouched")
+        self.assertFalse((u.state / "transaction").exists())
+
+    def test_rejects_corrupt_local_database_before_updating(self):
+        self.populate_old()
+        db = self.root / updater.DATABASE
+        db.write_bytes(b"damaged sqlite database")
+        u = updater.Updater(self.root)
+        with self.assertRaisesRegex(updater.UpdateError, "database is invalid"):
+            u.apply(self.source, "revision-a", runtime=False)
+        self.assertEqual((self.root / "main.py").read_text(), 'print("old")\n')
+        self.assertEqual(db.read_bytes(), b"damaged sqlite database")
+
+    def test_recover_after_abrupt_interruption(self):
+        # Simulate SIGKILL: BaseException bypasses the ordinary failure handler,
+        # leaving the journal for the next container start to recover.
+        self.populate_old()
+        u = updater.Updater(self.root)
+        original = u.install
+        count = {"n": 0}
+
+        def interrupted(source, destination):
+            original(source, destination)
+            count["n"] += 1
+            if count["n"] == 2:
+                raise KeyboardInterrupt("Simulated process kill")
+
+        with patch.object(u, "install", side_effect=interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                u.apply(self.source, "revision-a", runtime=False)
+
+        self.assertTrue((u.state / "transaction").is_dir())
+        u.recover()
         self.assertEqual((self.root / "main.py").read_text(), 'print("old")\n')
         self.data_unchanged()
         self.assertFalse((u.state / "transaction").exists())
