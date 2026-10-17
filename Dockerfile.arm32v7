@@ -27,6 +27,11 @@ RUN apt-get update \
  && test -z "$(find /opt/venv -path '*/pip/_vendor/bom.cdx.json' -print -quit)" \
  && apt-get purge -y --auto-remove build-essential libffi-dev \
  && rm -rf /var/lib/apt/lists/*
+# Python's base image also contains a separate, globally installed pip.
+# Patch it so the runtime image does not retain known fixable pip vulnerabilities.
+RUN /usr/local/bin/python -m pip install --no-cache-dir --upgrade pip \
+ && /usr/local/bin/python -c 'from importlib.metadata import version; assert tuple(map(int, version("pip").split("."))) >= (26, 2, 0)'
+
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # --- easyepg-Skripte ---
