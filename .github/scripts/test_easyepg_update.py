@@ -42,6 +42,8 @@ class UpdaterTests(unittest.TestCase):
             "main.py": 'print("new")\n',
             "requirements.txt": "bottle\n",
             "resources/lib/db.py": "x = 42\n",
+            "resources/lib/epg.py": "x = 43\n",
+            "resources/lib/web.py": "x = 44\n",
             "resources/data/json/providers.json": '{"provider":"test"}',
         }.items():
             path = self.source / rel
@@ -171,6 +173,23 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual((self.root / "main.py").read_text(), 'print("old")\n')
         self.data_unchanged()
         self.assertFalse((u.state / "transaction").exists())
+
+    def test_preflight_never_executes_downloaded_python_as_root(self):
+        marker = Path(self.tmp.name) / "unsafe_import_executed"
+        (self.source / "resources/lib/db.py").write_text(
+            "from pathlib import Path\n"
+            + f"Path({str(marker)!r}).write_text('unexpected')\n",
+            encoding="utf-8"
+        )
+        with patch.object(updater.importlib.metadata, "version", return_value="1.0"):
+            files = updater.manifest_for(self.source)
+            updater.validate_source(self.source, files, runtime=True)
+        self.assertFalse(marker.exists(), "Untrusted upstream code ran during validation")
+
+    def test_missing_required_module_is_refused(self):
+        (self.source / "resources/lib/web.py").unlink()
+        with self.assertRaisesRegex(updater.UpdateError, "required application modules"):
+            updater.manifest_for(self.source)
 
     def test_rejects_unreviewed_upstream_paths(self):
         (self.source / "unsafe.sh").write_text("echo unexpected")
