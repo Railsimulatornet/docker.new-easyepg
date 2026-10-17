@@ -27,6 +27,11 @@ RUN apt-get update \
  && test -z "$(find /opt/venv -path '*/pip/_vendor/bom.cdx.json' -print -quit)" \
  && apt-get purge -y --auto-remove build-essential libffi-dev \
  && rm -rf /var/lib/apt/lists/*
+# The application's dependencies are installed in /opt/venv above.
+# Remove the unused global pip (and bundled libraries) from the runtime image.
+RUN /usr/local/bin/python -m pip uninstall --yes pip \
+ && /usr/local/bin/python -c 'import importlib.util; assert importlib.util.find_spec("pip") is None'
+
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # --- easyepg-Skripte ---
