@@ -63,6 +63,8 @@ docker compose pull new-easyepg
 docker compose up -d new-easyepg
 ```
 
+Verwende dabei den Dienstnamen aus deiner vorhandenen Compose-Datei. Wenn du eine ältere Vorlage mit `easyepg` nutzt, ersetze `new-easyepg` in diesen Befehlen durch `easyepg`.
+
 Die neue Image-Version enthält aktualisierte System- und Python-Abhängigkeiten. Sie ersetzt nicht automatisch den unter `/easyepg` gespeicherten EasyEPG-Anwendungscode.
 
 **EasyEPG-Anwendung aktualisieren:** Das steuert `UPDATE` unabhängig vom Docker-Image:
@@ -175,6 +177,8 @@ After deployment, open `http://NAS-IP:4000`. Do not expose port `4000` directly 
 docker compose pull new-easyepg
 docker compose up -d new-easyepg
 ```
+
+Use the service name from your existing Compose file. If an older template names the service `easyepg`, replace `new-easyepg` with `easyepg` in these commands.
 
 The new image contains updated system and Python dependencies. It does not automatically replace the EasyEPG application code stored in `/easyepg`.
 
