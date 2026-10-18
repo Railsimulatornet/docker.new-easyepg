@@ -114,5 +114,5 @@ This is an unofficial, maintained Docker fork for [EasyEPG lite](https://github.
 - **Web UI:** `http://NAS-IP:4000`. Do not expose the web interface directly to the internet.
 - **Image update:** Run `docker compose pull easyepg` followed by `docker compose up -d easyepg` to use the latest published image.
 - **Upstream source:** `UPDATE=yes` downloads the EasyEPG application on startup; `UPDATE=no` uses the existing files in `/easyepg`. For a new, empty installation start with `UPDATE=yes`.
-- **Backups:** Back up your EasyEPG data before updating upstream application files. Startup updates do not have an automatic rollback.
+- **Backups:** Back up your EasyEPG data before updating upstream application files. A failed file update restores the previous application files; an immediate startup failure can trigger one fallback to the previous application. Application changes to user data are not rolled back.
 - **Credits:** Docker modifications Copyright (c) 2026 Roman Glos. EasyEPG originates from Jan-Luca Neumann; the Docker fork is based on DeBaschdi's work. Original attribution and GPL terms remain in force.
