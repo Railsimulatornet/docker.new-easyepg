@@ -23,6 +23,13 @@ def metadata(env, event, changed=()):
     trusted = (env.get("GITHUB_REPOSITORY") == REPOSITORY
                and env.get("GITHUB_REF") == "refs/heads/master")
     name = env.get("GITHUB_EVENT_NAME")
+    if name == "workflow_dispatch":
+        expected_sha = event.get("inputs", {}).get("expected_sha", "")
+        if expected_sha not in ("", None):
+            if not isinstance(expected_sha, str) or not re.fullmatch(r"[a-f0-9]{40}", expected_sha):
+                raise ValueError("Invalid expected post-merge commit SHA")
+            if env.get("GITHUB_SHA") != expected_sha:
+                raise ValueError("Dispatch SHA differs from verified merge commit")
     runtime_change = any(p in {"Dockerfile.amd64", "Dockerfile.arm64v8", "Dockerfile.arm32v7", "requirements.txt"}
                          or p.startswith("root/") for p in changed)
     requested = event.get("inputs", {}).get("publish", False) in (True, "true")
