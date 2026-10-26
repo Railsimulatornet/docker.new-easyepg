@@ -64,6 +64,8 @@ jobs:
   merge:
     permissions:
       actions: read
+      checks: read
+      statuses: read
       contents: write
       pull-requests: write
     if: >-
@@ -151,15 +153,10 @@ jobs:
           require_success "prep"
           require_success "assemble"
 
-          ARCH_SUCCESS="$(jq             '[.check_runs[]
-              | select(.name | startswith("build-arch ("))
-              | select(.status == "completed" and .conclusion == "success")]
-             | length' <<<"$CHECKS")"
-
-          if [[ "$ARCH_SUCCESS" -lt 3 ]]; then
-            echo "Not all three architecture checks are successful yet."
-            exit 0
-          fi
+          # Require exactly the three expected architecture matrix jobs.
+          require_success "build-arch (Dockerfile.amd64, linux/amd64, amd64, amd64)"
+          require_success "build-arch (Dockerfile.arm64v8, linux/arm64, arm64, arm64)"
+          require_success "build-arch (Dockerfile.arm32v7, linux/arm/v7, armv7, arm, v7)"
 
           require_success "compare-parsers"
 
