@@ -63,7 +63,7 @@ jobs:
 
   merge:
     permissions:
-      actions: read
+      actions: write
       checks: read
       statuses: read
       contents: write
@@ -209,6 +209,24 @@ jobs:
             exit 0
           }
           echo "All required checks passed for PR #$PR_NUMBER. Merging the exact SHA."
-          gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/merge" \
-            -f sha="$HEAD_SHA" -f merge_method=merge \
-            --jq '.merged' | grep -Fxq true
+          MERGE_RESULT="$(gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/merge" \
+            -f sha="$HEAD_SHA" -f merge_method=merge)"
+          MERGED="$(jq -r '.merged // false' <<<"$MERGE_RESULT")"
+          MERGE_SHA="$(jq -r '.sha // empty' <<<"$MERGE_RESULT")"
+          if [[ "$MERGED" != "true" || ! "$MERGE_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Merge API did not confirm a successful merge with a valid commit SHA." >&2
+            exit 1
+          fi
+
+          # Stop on a concurrent master advance rather than publishing the wrong commit.
+          CURRENT_MAIN="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha')"
+          if [[ "$CURRENT_MAIN" != "$MERGE_SHA" ]]; then
+            echo "master advanced after the merge; post-merge publication needs attention." >&2
+            exit 1
+          fi
+
+          # GITHUB_TOKEN-generated merges do not fire push workflows. An explicit
+          # workflow_dispatch is permitted and must be pinned to the merged SHA.
+          gh workflow run dockerhub.yml --repo "$GITHUB_REPOSITORY" \
+            --ref master -f publish=true -f expected_sha="$MERGE_SHA"
+          echo "Requested post-merge build for PR #$PR_NUMBER at commit $MERGE_SHA."
