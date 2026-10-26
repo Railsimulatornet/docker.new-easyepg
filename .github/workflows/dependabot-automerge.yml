@@ -10,17 +10,18 @@ on:
     types: [completed]
 
 permissions:
-  actions: read
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
 
 concurrency:
-  group: dependabot-automerge-${{ github.event.pull_request.number || github.event.workflow_run.head_sha }}
+  group: dependabot-automerge-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
   classify:
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     if: >-
       github.event_name == 'pull_request_target' &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
@@ -47,7 +48,7 @@ jobs:
           eligible=false
           if [[ "$UPDATE_TYPE" == "version-update:semver-patch" ]]; then
             case "$ECOSYSTEM" in
-              pip|github_actions)
+              pip)
                 eligible=true
                 ;;
             esac
@@ -61,6 +62,12 @@ jobs:
           fi
 
   merge:
+    permissions:
+      actions: read
+      checks: read
+      statuses: read
+      contents: write
+      pull-requests: write
     if: >-
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.event == 'pull_request' &&
@@ -94,37 +101,43 @@ jobs:
             exit 0
           fi
 
+          # Never consume a completed run belonging to an older PR commit.
+          TRIGGER_SHA="$(jq -r '.workflow_run.head_sha // empty' "$GITHUB_EVENT_PATH")"
+          HEAD_REPO="$(jq -r '.head.repo.full_name // empty' <<<"$PR_JSON")"
+          HEAD_REF="$(jq -r '.head.ref // empty' <<<"$PR_JSON")"
+          if [[ "$TRIGGER_SHA" != "$HEAD_SHA" || "$HEAD_REPO" != "$GITHUB_REPOSITORY" ||
+                "$HEAD_REF" != dependabot/* ]]; then
+            echo "Not the current same-repository Dependabot commit."
+            exit 0
+          fi
+          MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha')"
+          BASE_SHA="$(jq -r '.base.sha' <<<"$PR_JSON")"
+          if [[ "$MAIN_SHA" != "$BASE_SHA" ]]; then
+            echo "PR base is stale; requires rebase."
+            exit 0
+          fi
+          BEHIND="$(gh api "repos/$GITHUB_REPOSITORY/compare/$MAIN_SHA...$HEAD_SHA" --jq '.behind_by')"
+          if [[ "$BEHIND" != 0 ]]; then
+            echo "Dependabot branch is behind master."
+            exit 0
+          fi
+
           if ! gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels"             --jq '.[].name' | grep -Fxq 'automerge:patch'; then
             echo "PR is not marked for patch auto-merge."
             exit 0
           fi
 
-          mapfile -t FILES < <(
-            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100"               --jq '.[].filename'
-          )
-
-          if (( ${#FILES[@]} == 0 )); then
-            echo "No changed files found."
+          # Only standalone pip patch updates of requirements.txt are eligible.
+          # GitHub-Actions updates remain manual, even when their CI is green.
+          FILES_JSON="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100")"
+          if ! jq -e 'length == 1
+            and .[0].filename == "requirements.txt"
+            and .[0].status == "modified"
+            and .[0].additions == 1
+            and .[0].deletions == 1
+            and (.[0].patch | type == "string")' <<<"$FILES_JSON" >/dev/null; then
+            echo "Unexpected files or non-atomic requirements patch; manual review required."
             exit 0
-          fi
-
-          need_compat=false
-          if (( ${#FILES[@]} == 1 )) && [[ "${FILES[0]}" == "requirements.txt" ]]; then
-            need_compat=true
-          else
-            for file in "${FILES[@]}"; do
-              case "$file" in
-                .github/workflows/dependency-compatibility.yml)
-                  need_compat=true
-                  ;;
-                .github/workflows/*.yml|.github/workflows/*.yaml)
-                  ;;
-                *)
-                  echo "Unexpected file for automatic merge: $file"
-                  exit 0
-                  ;;
-              esac
-            done
           fi
 
           CHECKS="$(gh api             -H 'Accept: application/vnd.github+json'             "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?filter=latest&per_page=100")"
@@ -140,19 +153,62 @@ jobs:
           require_success "prep"
           require_success "assemble"
 
-          ARCH_SUCCESS="$(jq             '[.check_runs[]
-              | select(.name | startswith("build-arch ("))
-              | select(.status == "completed" and .conclusion == "success")]
-             | length' <<<"$CHECKS")"
+          # Require exactly the three expected architecture matrix jobs.
+          require_success "build-arch (Dockerfile.amd64, linux/amd64, amd64, amd64)"
+          require_success "build-arch (Dockerfile.arm64v8, linux/arm64, arm64, arm64)"
+          require_success "build-arch (Dockerfile.arm32v7, linux/arm/v7, armv7, arm, v7)"
 
-          if [[ "$ARCH_SUCCESS" -lt 3 ]]; then
-            echo "Not all three architecture checks are successful yet."
+          require_success "compare-parsers"
+
+          # The multiarch build and parser compatibility run are mandatory.
+          RUNS="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=100")"
+          if ! jq -e '
+            ([.workflow_runs[]
+              | select(.name == "Build & Push to Docker Hub (multi-arch)"
+                       and .status == "completed" and .conclusion == "success")] | length) >= 1
+            and
+            ([.workflow_runs[]
+              | select(.name == "EasyEPG XML and JSON compatibility"
+                       and .status == "completed" and .conclusion == "success")] | length) >= 1
+            and
+            ([.workflow_runs[]
+              | select(.status != "completed" or .conclusion != "success")] | length) == 0
+          ' <<<"$RUNS" >/dev/null; then
+            echo "Both required PR workflows must pass; no pending/failed runs allowed."
             exit 0
           fi
 
-          if [[ "$need_compat" == "true" ]]; then
-            require_success "compare-parsers"
+          # A passing matrix job is not enough if another check failed or is neutral.
+          if ! jq -e '
+            (.check_runs | length > 0)
+            and all(.check_runs[];
+              # Own workflow_run gate jobs may be skipped or in progress
+              # while checking the PR. They cannot act as approval checks.
+              (.name == "classify" or .name == "merge")
+              or
+              (.status == "completed"
+               and (.conclusion == "success"
+                    or (.name == "publish" and .conclusion == "skipped")))
+            )
+          ' <<<"$CHECKS" >/dev/null; then
+            echo "A check is skipped unexpectedly, neutral, missing or not successful."
+            exit 0
           fi
 
-          echo "All required checks passed for PR #$PR_NUMBER. Merging."
-          gh pr merge "$PR_NUMBER"             --repo "$GITHUB_REPOSITORY"             --merge
+          if ! gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status" \
+              --jq '[.statuses[] | select(.state != "success")] | length == 0' |
+              grep -Fxq true; then
+            echo "Unsuccessful legacy commit status."
+            exit 0
+          fi
+
+          # The merge endpoint compares the verified head SHA atomically.
+          CURRENT_MAIN="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha')"
+          [[ "$CURRENT_MAIN" == "$MAIN_SHA" ]] || {
+            echo "master advanced during verification."
+            exit 0
+          }
+          echo "All required checks passed for PR #$PR_NUMBER. Merging the exact SHA."
+          gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/merge" \
+            -f sha="$HEAD_SHA" -f merge_method=merge \
+            --jq '.merged' | grep -Fxq true
