@@ -50,6 +50,28 @@ class MetadataTests(unittest.TestCase):
     def test_manual_opt_in(self):
         self.assertEqual(self.value("workflow_dispatch", inputs={"publish": "true"})["publish"], "true")
 
+    def test_pinned_dispatch_publishes_only_exact_commit(self):
+        expected = "a" * 40
+        inputs = {"publish": "true", "expected_sha": expected}
+        self.assertEqual(self.value("workflow_dispatch", inputs=inputs,
+                                    GITHUB_SHA=expected)["publish"], "true")
+        with self.assertRaisesRegex(ValueError, "differs"):
+            self.value("workflow_dispatch", inputs=inputs, GITHUB_SHA="b" * 40)
+
+    def test_invalid_dispatch_commit_rejected(self):
+        for invalid in ("bad-sha", "A" * 40, "a" * 39, 123):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "Invalid expected"):
+                self.value("workflow_dispatch",
+                           inputs={"publish": "true", "expected_sha": invalid},
+                           GITHUB_SHA="a" * 40)
+
+    def test_post_merge_wiring_keeps_explicit_dispatch_and_pin(self):
+        automerge = (BASE.parent / "workflows/dependabot-automerge.yml").read_text()
+        build = (BASE.parent / "workflows/dockerhub.yml").read_text()
+        self.assertIn("gh workflow run dockerhub.yml", automerge)
+        self.assertIn('-f expected_sha="$MERGE_SHA"', automerge)
+        self.assertIn("      expected_sha:", build)
+
     def test_rerun_gets_new_build_tag(self):
         a, b = self.value(), self.value(GITHUB_RUN_ATTEMPT="2")
         self.assertRegex(a["build_tag"], r"^\d{8}-build\.126\.1$")
@@ -82,6 +104,22 @@ class MetadataTests(unittest.TestCase):
             self.assertRegex(lines[1], r"^date_tag=[0-9]{8}$")
             self.assertEqual(lines[2], "publish=true")
             self.assertNotIn(marker, output.read_text(encoding="utf-8"))
+
+    def test_main_rejects_mismatched_dispatch_commit_without_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / "event.json"
+            output = Path(tmp) / "github-output"
+            event.write_text(json.dumps({"inputs": {"publish": "true", "expected_sha": "a" * 40}}))
+            env = self.env | {
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_EVENT_PATH": str(event),
+                "GITHUB_OUTPUT": str(output),
+                "GITHUB_SHA": "b" * 40,
+            }
+            with patch.dict(os.environ, env, clear=True):
+                with self.assertRaisesRegex(ValueError, "differs"):
+                    build_metadata_main()
+            self.assertFalse(output.exists())
 
     def test_main_rejects_untrusted_run_number_without_writing(self):
         with tempfile.TemporaryDirectory() as tmp:
