@@ -12,6 +12,10 @@ on:
         description: Publish verified images (master only)
         type: boolean
         default: false
+      expected_sha:
+        description: Require this exact master commit for automated post-merge publication
+        type: string
+        default: ''
 
 permissions:
   contents: read
