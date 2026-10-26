@@ -161,9 +161,7 @@ jobs:
             exit 0
           fi
 
-          if [[ "$need_compat" == "true" ]]; then
-            require_success "compare-parsers"
-          fi
+          require_success "compare-parsers"
 
           # The multiarch build and parser compatibility run are mandatory.
           RUNS="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=100")"
@@ -205,5 +203,13 @@ jobs:
             exit 0
           fi
 
-          echo "All required checks passed for PR #$PR_NUMBER. Merging."
-          gh pr merge "$PR_NUMBER"             --repo "$GITHUB_REPOSITORY"             --merge
+          # The merge endpoint compares the verified head SHA atomically.
+          CURRENT_MAIN="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha')"
+          [[ "$CURRENT_MAIN" == "$MAIN_SHA" ]] || {
+            echo "master advanced during verification."
+            exit 0
+          }
+          echo "All required checks passed for PR #$PR_NUMBER. Merging the exact SHA."
+          gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/merge" \
+            -f sha="$HEAD_SHA" -f merge_method=merge \
+            --jq '.merged' | grep -Fxq true
