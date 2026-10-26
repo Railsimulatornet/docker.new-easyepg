@@ -185,11 +185,13 @@ jobs:
           if ! jq -e '
             (.check_runs | length > 0)
             and all(.check_runs[];
-              .status == "completed"
-              and
-              (.conclusion == "success"
-               or (.name == "publish" and .conclusion == "skipped")
-               or (.name == "merge" and .conclusion == "skipped"))
+              # Own workflow_run gate jobs may be skipped or in progress
+              # while checking the PR. They cannot act as approval checks.
+              (.name == "classify" or .name == "merge")
+              or
+              (.status == "completed"
+               and (.conclusion == "success"
+                    or (.name == "publish" and .conclusion == "skipped")))
             )
           ' <<<"$CHECKS" >/dev/null; then
             echo "A check is skipped unexpectedly, neutral, missing or not successful."
