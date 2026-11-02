@@ -16,9 +16,10 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt
+COPY .github/scripts/verify_runtime_deps.py /tmp/verify_runtime_deps.py
 RUN python -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    /opt/venv/bin/pip install --no-cache-dir --only-binary=curl-cffi -r /tmp/requirements.txt && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade 'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' && \
+    /opt/venv/bin/pip install --no-cache-dir --only-binary=curl-cffi --no-deps -r /tmp/requirements.txt && \
     /opt/venv/bin/pip check && \
     /opt/venv/bin/pip uninstall --yes setuptools wheel && \
     /opt/venv/bin/pip uninstall --yes pip && \
@@ -26,7 +27,9 @@ RUN python -m venv /opt/venv && \
 # The application's dependencies are installed in /opt/venv above.
 # Remove the unused global pip (and bundled libraries) from the runtime image.
 RUN /usr/local/bin/python -m pip uninstall --yes pip \
- && /usr/local/bin/python -c 'import importlib.util; assert importlib.util.find_spec("pip") is None'
+ && /usr/local/bin/python -c 'import importlib.util; assert importlib.util.find_spec("pip") is None' \
+ && /opt/venv/bin/python /tmp/verify_runtime_deps.py /tmp/requirements.txt \
+ && rm /tmp/verify_runtime_deps.py
 
 ENV PATH="/opt/venv/bin:${PATH}"
 
