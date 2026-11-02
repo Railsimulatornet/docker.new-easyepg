@@ -20,6 +20,14 @@ Behebbare HIGH-/CRITICAL-Funde oder unvollständige Scans verhindern die Veröff
 
 Pull Requests sowie reine Dokumentations-/Workflow-Änderungen starten Tests, veröffentlichen aber kein neues Image. Änderungen an Dockerfiles, `requirements.txt` oder Startskripten auf `master` sowie der Wochenjob veröffentlichen nach bestandenen Prüfungen. Bei einem manuellen Lauf ist die Veröffentlichung standardmäßig deaktiviert und muss mit `publish` ausdrücklich ausgewählt werden. Der Workflow legt keine GitHub-Releases an.
 
+
+### Freigegebene Python-Abhängigkeiten
+
+Die Python-Pakete einschließlich ihrer Unterabhängigkeiten sind in `requirements.txt` mit exakten Versionen festgelegt. So kann ein wöchentlicher Build nicht heimlich eine neue Minor- oder Major-Version übernehmen. Der Stand entspricht den erfolgreich getesteten Multi-Arch-Images vom 02.11.2026: `pytz 2026.6` war darin bereits enthalten; `curl-cffi` bleibt bis zur gesonderten Freigabe bei `0.16.3`. Der Build installiert mit `--no-deps`, prüft die Abhängigkeitskonsistenz mittels `pip check` und gleicht **sämtliche** im Python-Laufzeitsystem installierten Pakete gegen diese Liste ab. Zusätzliche Pakete und Versionsabweichungen stoppen den Build. Die temporären Build-Werkzeuge sind ebenfalls festgelegt und werden aus dem Laufzeit-Image entfernt.
+
+Dependabot darf weiterhin neue Versionen per Pull Request vorschlagen. Ein neuer Patch wird erst nach den bestehenden Sicherheits- und Kompatibilitätsprüfungen freigegeben; Minor-/Major-Versionen benötigen eine manuelle Prüfung. **Wichtig:** Die Basis `python:3.12-slim`, Debian-Pakete und der beim Start unabhängig aktualisierte EasyEPG-Quellcode sind dadurch noch nicht unveränderlich. Diese Änderung sichert die Python-Paketversionen, nicht das gesamte Image auf Byte-Ebene.
+
+
 ## English
 
 Existing image names, Compose settings, port `4000` and the `/easyepg` and `/easyepg/xml` mounts remain unchanged. AMD64, ARM64 and ARMv7 remain supported.
@@ -33,3 +41,9 @@ New public `build-<SHA>-<architecture>` candidate tags are no longer created. Ex
 The weekly workflow builds and checks all three platforms before publishing their verified contents, SBOM and provenance without rebuilding. Fixable HIGH/CRITICAL findings and incomplete scans block publication. Complete JSON reports retain unfixed findings and are stored as workflow artifacts for 30 days. Passing the gate does not imply an absence of all vulnerabilities.
 
 PRs and documentation/workflow-only changes run tests without publishing. Runtime-source changes on `master` and scheduled runs publish after successful checks. Manual runs default to tests only; publication requires opting in with `publish`. This workflow does not create GitHub releases.
+
+### Approved Python dependency versions
+
+Every Python runtime package (including indirect dependencies) is pinned to an exact version in `requirements.txt`. Scheduled builds therefore cannot silently adopt a newer minor or major Python package. The pins reflect the successful 2 November 2026 multi-platform build: `pytz 2026.6` was already published, while `curl-cffi` stays at `0.16.3` pending separate review. Builds install with `--no-deps`, perform `pip check`, and reject any missing, unexpected or version-mismatched runtime package. Temporary build tools are also version-pinned and removed before runtime.
+
+Dependabot still proposes updates through pull requests; existing CI and auto-merge gates remain in force. Base-image and Debian packages, and upstream EasyEPG application code loaded at startup, are **not** pinned by this change. It guarantees the listed Python runtime versions, not byte-for-byte image reproducibility.
