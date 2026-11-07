@@ -1,5 +1,5 @@
-# Freigegebene Python-Versionen aus dem erfolgreich veröffentlichten Multi-Arch-Build vom 02.11.2026.
-# Neue Versionen nur über geprüfte Pull Requests übernehmen; keine Updates während des Builds.
+# Freigegebene Python-Versionen; Änderungen nur über geprüfte Pull Requests.
+# Keine automatischen Paketupdates während des Builds.
 # Direkt von EasyEPG benötigte Pakete:
 bottle==0.13.4
 requests==2.34.2
@@ -11,7 +11,7 @@ beautifulsoup4==4.15.0
 simplejson==4.2.0
 cffi==2.1.1
 cheroot==11.1.2
-curl-cffi==0.16.3
+curl-cffi==0.17.0
 pytz==2026.6
 
 # Zusätzlich benötigte Pakete (inklusive Build-Toolchain-Restpaket packaging):

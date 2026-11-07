@@ -125,4 +125,117 @@ assert local_settings.read_text() == '{"fixture":"keep"}'
 assert hashlib.sha256(local_db.read_bytes()).hexdigest() == before_db
 print("Offline staged update, local DB preservation and rollback: OK")
 
+# Exercise provider-style HTTP exchanges using the installed native curl library.
+# The container still runs with --network none; only loopback is used.
+import base64
+import gzip
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+from threading import Thread
+from urllib.parse import parse_qs, urlsplit
+
+PAYLOAD = {"channels": [{"id": "demo", "name": "Grüße & Musik"}], "number": 42}
+BROTLI_PAYLOAD = base64.b64decode(
+    "CyCAeyJjaGFubmVscyI6W3siaWQiOiJkZW1vIiwibmFtZSI6Ikdyw7zDn2UgJiBNdXNpayJ9XSwibnVtYmVyIjo0Mn0D"
+)
+
+
+class ProviderFixture(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *_):
+        pass
+
+    def send_fixture(self, body, status=200, headers=None):
+        self.send_response(status)
+        self.send_header("Content-Type", 'application/json; charset="UTF-8"')
+        self.send_header("Content-Length", str(len(body)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        path = urlsplit(self.path)
+        raw = json.dumps(PAYLOAD, ensure_ascii=False, separators=(",", ":")).encode()
+        if path.path == "/redirect":
+            self.send_fixture(b"", 302, {"Location": "/channels", "Set-Cookie": "fixture=ok; Path=/"})
+        elif path.path == "/gzip":
+            self.send_fixture(gzip.compress(raw), headers={"Content-Encoding": "gzip"})
+        elif path.path == "/br":
+            self.send_fixture(BROTLI_PAYLOAD, headers={"Content-Encoding": "br"})
+        elif path.path == "/echo":
+            self.send_fixture(json.dumps({"query": parse_qs(path.query),
+                "cookie": self.headers.get("Cookie", ""),
+                "header": self.headers.get("X-Fixture", "")}).encode())
+        elif path.path == "/channels":
+            self.send_fixture(raw)
+        elif path.path == "/invalid":
+            self.send_fixture(b"{invalid}")
+        else:
+            self.send_fixture(b'{"error":"not found"}', 404)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        if not 0 <= length <= 4096:
+            self.send_fixture(b'{"error":"size"}', 413)
+            return
+        body = self.rfile.read(length)
+        if "application/json" in self.headers.get("Content-Type", ""):
+            data = json.loads(body)
+        else:
+            data = parse_qs(body.decode())
+        self.send_fixture(json.dumps(data, ensure_ascii=False).encode())
+
+
+def check_http_backend(backend, *, impersonate=False):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ProviderFixture)
+    server.daemon_threads = True
+    thread = Thread(target=lambda: server.serve_forever(poll_interval=0.05), daemon=True)
+    thread.start()
+    root = "http://127.0.0.1:" + str(server.server_port)
+    try:
+        options = {"impersonate": "firefox"} if impersonate else {}
+        with backend.Session(**options) as client:
+            client.trust_env = False
+            response = client.get(root + "/channels", timeout=5)
+            assert response.status_code == 200
+            assert response.json() == PAYLOAD
+            assert "Grüße & Musik" in response.text
+            assert response.json(parse_int=str)["number"] == "42"
+            echo = client.get(root + "/echo", params={"lang": "de", "search": "Grüße"},
+                headers={"X-Fixture": "provider-style"}, cookies={"synthetic": "only-a-test"}, timeout=5).json()
+            assert echo["query"] == {"lang": ["de"], "search": ["Grüße"]}
+            assert echo["header"] == "provider-style"
+            assert "synthetic=only-a-test" in echo["cookie"]
+            assert client.post(root + "/epg", json=PAYLOAD, timeout=5).json() == PAYLOAD
+            assert client.post(root + "/login", data={"fixture": "Grüße"}, timeout=5).json() == {"fixture": ["Grüße"]}
+            assert client.get(root + "/redirect", allow_redirects=False, timeout=5).status_code == 302
+            assert client.get(root + "/redirect", timeout=5).json() == PAYLOAD
+            assert "fixture=ok" in client.get(root + "/echo", timeout=5).json()["cookie"]
+            for encoding in ("gzip", "br"):
+                assert client.get(root + "/" + encoding, timeout=5).json() == PAYLOAD, encoding
+            failed = client.get(root + "/missing", timeout=5)
+            assert failed.status_code == 404
+            try:
+                failed.raise_for_status()
+            except Exception:
+                pass
+            else:
+                raise AssertionError("HTTP error did not raise")
+            try:
+                client.get(root + "/invalid", timeout=5).json()
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Invalid JSON was accepted")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        assert not thread.is_alive(), "Fixture server did not stop"
+
+
+check_http_backend(fingerprint_requests, impersonate=True)
+print("Offline curl-cffi HTTP, cookies, redirects, JSON, gzip and Brotli: OK")
 print("Offline runtime, configured UID/GID and XML directory: OK")
