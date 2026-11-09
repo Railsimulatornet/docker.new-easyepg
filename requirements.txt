@@ -20,5 +20,5 @@ jaraco.functools==4.6.0
 more-itertools==11.2.1
 packaging==26.3
 pycparser==3.12
-soupsieve==3.0.4
+soupsieve==4.0.1
 typing-extensions==4.16.0
