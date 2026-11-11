@@ -7,6 +7,7 @@ on:
     workflows:
       - Build & Push to Docker Hub (multi-arch)
       - EasyEPG XML and JSON compatibility
+      - CodeQL
     types: [completed]
 
 permissions:
@@ -159,6 +160,8 @@ jobs:
           require_success "build-arch (Dockerfile.arm32v7, linux/arm/v7, armv7, arm, v7)"
 
           require_success "compare-parsers"
+          require_success "Analyze (actions)"
+          require_success "Analyze (python)"
 
           # The multiarch build and parser compatibility run are mandatory.
           RUNS="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=100")"
@@ -169,6 +172,10 @@ jobs:
             and
             ([.workflow_runs[]
               | select(.name == "EasyEPG XML and JSON compatibility"
+                       and .status == "completed" and .conclusion == "success")] | length) >= 1
+            and
+            ([.workflow_runs[]
+              | select(.name == "CodeQL"
                        and .status == "completed" and .conclusion == "success")] | length) >= 1
             and
             ([.workflow_runs[]
@@ -229,4 +236,5 @@ jobs:
           # workflow_dispatch is permitted and must be pinned to the merged SHA.
           gh workflow run dockerhub.yml --repo "$GITHUB_REPOSITORY" \
             --ref master -f publish=true -f expected_sha="$MERGE_SHA"
-          echo "Requested post-merge build for PR #$PR_NUMBER at commit $MERGE_SHA."
+          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref master
+          echo "Requested post-merge Docker build and CodeQL scan for PR #$PR_NUMBER at commit $MERGE_SHA."
