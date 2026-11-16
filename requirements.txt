@@ -8,7 +8,7 @@ certifi==2026.10.23
 idna==3.20
 xmltodict==1.0.4
 beautifulsoup4==4.15.0
-simplejson==4.2.0
+simplejson==4.3.0
 cffi==2.1.1
 cheroot==11.1.2
 curl-cffi==0.17.0
@@ -20,5 +20,5 @@ jaraco.functools==4.6.0
 more-itertools==11.2.1
 packaging==26.3
 pycparser==3.12
-soupsieve==4.0.1
+soupsieve==4.1
 typing-extensions==4.16.0
