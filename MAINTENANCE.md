@@ -14,12 +14,20 @@ Es werden keine neuen öffentlichen `build-<SHA>-<Architektur>`-Kandidaten-Tags 
 
 ### Automatische Pflege
 
-Der bisherige wöchentliche Ablauf bleibt erhalten. Jede Architektur wird zunächst lokal gebaut, ohne Veröffentlichung geprüft und erst nach erfolgreichen Prüfungen aller drei Plattformen zu einem gemeinsamen Image zusammengefasst. Docker Hub erhält genau diese geprüften Inhalte einschließlich SBOM und Build-Nachweisen, ohne zweiten Build.
+Der Wochenbau beginnt samstags um 03:29 UTC und liegt damit vor dem sonntäglichen NAS-Wartungsfenster. Jede Architektur wird zunächst lokal gebaut, ohne Veröffentlichung geprüft und erst nach erfolgreichen Prüfungen aller drei Plattformen zu einem gemeinsamen Image zusammengefasst. Docker Hub erhält genau diese geprüften Inhalte einschließlich SBOM und Build-Nachweisen, ohne zweiten Build.
 
 Behebbare HIGH-/CRITICAL-Funde oder unvollständige Scans verhindern die Veröffentlichung. Die vollständigen JSON-Berichte enthalten auch derzeit nicht behebbare Funde und werden 30 Tage als Workflow-Artefakte aufbewahrt. Ein bestandener Scan bedeutet nicht, dass das Image frei von allen Schwachstellen ist.
 
 Pull Requests sowie reine Dokumentations-/Workflow-Änderungen starten Tests, veröffentlichen aber kein neues Image. Änderungen an Dockerfiles, `requirements.txt` oder Startskripten auf `master` sowie der Wochenjob veröffentlichen nach bestandenen Prüfungen. Bei einem manuellen Lauf ist die Veröffentlichung standardmäßig deaktiviert und muss mit `publish` ausdrücklich ausgewählt werden. Der Workflow legt keine GitHub-Releases an.
 
+
+### Lokale Betriebsprüfung
+
+Alle drei Image-Architekturen prüfen alle 30 Sekunden die vorhandene, lesende EasyEPG-API `http://127.0.0.1:4000/api/grabber-status`. HTTP-Fehler, eine ungültige Antwort oder fehlende Zustandswerte machen die Prüfung erfolglos. Der Aufruf lautet `/opt/venv/bin/python /usr/local/bin/easyepg.healthcheck.py`; er startet keinen EPG-Abruf und kontaktiert keinen externen Anbieter. Ein bereits aktiver Abruf gilt ebenfalls als betriebsbereit. Die Prüfung bestätigt die lokale Anwendung, nicht die Aktualität sämtlicher Programmdaten oder die Anmeldung bei einem Anbieter.
+
+Die Startfrist beträgt 60 Sekunden. Bei der erstmaligen Einführung aus einem alten Image ohne HEALTHCHECK muss der neue Kandidat kontrolliert übernommen werden. Für ein vorhandenes funktionierendes EasyEPG lässt sich dieselbe lesende Statusabfrage schon vor dem Austausch als Ausgangsprüfung verwenden. Ein Image-Pull ersetzt den laufenden Container noch nicht.
+
+Dependabot überwacht zusätzlich die Python-Dockerbasis in `Dockerfile.amd64`, `Dockerfile.arm64v8` und `Dockerfile.arm32v7`. Diese Dateinamen werden vom Docker-Dateifilter von Dependabot unterstützt. Laufzeitwechsel bleiben prüfpflichtige Änderungsanträge; die bestehenden Regeln für die automatische Übernahme reiner Python-Paketkorrekturen werden nicht erweitert.
 
 ### Freigegebene Python-Abhängigkeiten
 

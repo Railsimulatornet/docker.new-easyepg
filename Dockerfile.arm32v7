@@ -40,6 +40,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 # --- easyepg-Skripte ---
 COPY root/entrypoint /usr/local/sbin/entrypoint
 COPY root/easyepg.process /usr/local/bin/easyepg.process
+COPY root/easyepg.healthcheck.py /usr/local/bin/easyepg.healthcheck.py
 COPY root/easyepg.update /usr/local/bin/easyepg.update
 COPY root/easyepg.safe_update.py /usr/local/bin/easyepg.safe_update.py
 COPY root/packages.cleanup /usr/local/sbin/packages.cleanup
@@ -62,4 +63,6 @@ COPY LICENSE /usr/share/licenses/GPL-3.0.txt
 
 VOLUME ["/easyepg", "/easyepg/xml"]
 EXPOSE 4000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD ["/opt/venv/bin/python", "/usr/local/bin/easyepg.healthcheck.py"]
 ENTRYPOINT ["/usr/local/sbin/entrypoint"]

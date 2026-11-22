@@ -21,3 +21,12 @@ updates:
         update-types: [patch]
       python-minor:
         update-types: [minor]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: thursday
+    allow:
+      - dependency-name: python
+    open-pull-requests-limit: 3
