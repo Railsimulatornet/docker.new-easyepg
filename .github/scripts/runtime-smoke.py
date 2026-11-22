@@ -89,6 +89,41 @@ with patch.object(upstream_web, "init_config"), patch.object(upstream_web, "run"
     assert start_web.call_count == 1
     assert start_web.call_args.kwargs.get("server") == "cheroot"
 
+# Exercise the existing upstream status handler through real Cheroot HTTP.
+# The Grabber is constructed without its scheduling thread or provider work.
+from types import SimpleNamespace
+from threading import Thread
+from time import sleep
+from resources.lib.epg import Grabber
+health_spec = importlib.util.spec_from_file_location(
+    "easyepg_healthcheck", "/usr/local/bin/easyepg.healthcheck.py")
+health = importlib.util.module_from_spec(health_spec)
+health_spec.loader.exec_module(health)
+grabber = Grabber.__new__(Grabber)
+grabber.grabbing, grabber.status = False, "Idle"
+grabber.pr = SimpleNamespace(progress=100)
+grabber.file_available, grabber.file_created = False, "Never"
+upstream_web.g = grabber
+status_server = cheroot.wsgi.Server(("127.0.0.1", 4000), bottle.default_app())
+status_thread = Thread(target=status_server.start, daemon=True)
+status_thread.start()
+try:
+    for attempt in range(30):
+        try:
+            assert health.check_health()
+            break
+        except OSError:
+            if attempt == 29:
+                raise
+            sleep(0.1)
+    grabber.grabbing, grabber.status, grabber.pr.progress = True, "Downloading EPG data...", 31.25
+    assert health.check_health()
+finally:
+    status_server.stop()
+    status_thread.join(timeout=5)
+    assert not status_thread.is_alive(), "Local status server did not stop"
+print("Offline actual upstream status route and image healthcheck: OK")
+
 print("Offline upstream imports, curl-cffi native library, Cheroot and curl: OK")
 
 # Test the actual updater against the pinned upstream source without network access.
