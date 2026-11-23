@@ -36,6 +36,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - name: Validate pipeline and failure handling
         shell: bash
@@ -74,6 +75,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Install image-copy tool on GitHub runner
         shell: bash
         run: |
@@ -97,7 +99,7 @@ jobs:
           provenance: mode=max
           sbom: true
           labels: |
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ github.event.pull_request.head.sha || github.sha }}
             org.opencontainers.image.version=${{ needs.prep.outputs.build_tag }}
       - name: Load the exact candidate for runtime tests
         shell: bash
@@ -147,6 +149,32 @@ jobs:
             docker rm -fv "$name" >/dev/null 2>&1 || true
             trap - EXIT
           done
+      - name: Exercise actual XMLTV import, export and JSON in the built candidate
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -Eeuo pipefail
+          timeout 120 docker run --rm --network none --read-only --user 65532:65532 \
+            --platform "$PLATFORM" --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            --env EASYEPG_SOURCE=/source --env PYTHONDONTWRITEBYTECODE=1 \
+            --mount "type=bind,src=$PWD/_upstream_runtime_test,dst=/source,readonly" \
+            --mount "type=bind,src=$PWD/.github/scripts/dependency-compatibility.py,dst=/test.py,readonly" \
+            --entrypoint python "easyepg:ci-$SUFFIX" /test.py \
+            2>&1 | tee "$RUNNER_TEMP/parser-$SUFFIX.log"
+          grep -q '^SNAPSHOT_JSON=' "$RUNNER_TEMP/parser-$SUFFIX.log"
+      - name: Save offline runtime and parser reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: easyepg-runtime-${{ matrix.suffix }}
+          path: |
+            ${{ runner.temp }}/runtime-*.log
+            ${{ runner.temp }}/parser-*.log
+          retention-days: 14
+          if-no-files-found: warn
       - name: Complete Trivy report and security gate
         shell: bash
         env:
@@ -180,6 +208,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/download-artifact@v8
         with:
           pattern: easyepg-candidate-*
@@ -226,6 +255,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/download-artifact@v8
         with:
           name: easyepg-verified-bundle
