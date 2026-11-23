@@ -1,0 +1,115 @@
+name: Öffentliche PR-Beschreibung prüfen
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pr-description-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  description:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # Read only the event as data. Never check out or execute PR contents here.
+      - name: Beschreibung ohne Wiedergabe ihres Inhalts prüfen
+        shell: bash
+        run: |
+          python3 -I - <<'PY'
+          import html
+          import ipaddress
+          import json
+          import os
+          import re
+          import unicodedata
+          from urllib.parse import unquote
+
+          PRIVATE_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
+              '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
+              '169.254.0.0/16', 'fc00::/7', 'fe80::/10'))
+          PATTERNS = tuple(re.compile(value, re.IGNORECASE) for value in (
+              r'\bCVE-\d{4}-\d{4,}\b',
+              r'(?<![a-z0-9])[a-f0-9]{32,128}(?![a-z0-9])',
+              r'\b(?:sha(?:1|224|256|384|512)?|hash|checksum|prüfsumme|commit|revision|quellstand|head|merge)\b[\s:=/`\x27"(\[]*[a-f0-9]{7,128}\b',
+              r'https?://github\.com/[a-z0-9_.-]+/[a-z0-9_.-]+/(?:commits?|tree|blob|compare)/[a-f0-9]{7,128}\b',
+              r'\b[a-z0-9][a-z0-9._-]*\.(?:local|lan|internal|home\.arpa)\b',
+              r'\b(?:srv|serv)[0-9]{1,4}(?:\.[a-z0-9.-]+)?\b',
+              r'(?<![a-z0-9])[a-z]:[\\/]',
+              r'\\\\[a-z0-9][^\s\\]{0,255}\\',
+              r'(?<![a-z0-9:/])/(?:home|root|Users|workspace|mnt|media|volume[0-9]+|srv|tmp|var/tmp)(?:/|\b)',
+          ))
+          IP_CANDIDATES = re.compile(
+              r'(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?!\w)|'
+              r'(?<![a-z0-9])(?:[a-f0-9]{0,4}:){2,8}[a-f0-9:.]{0,45}'
+              r'(?:%[a-z0-9_.-]{1,32})?(?![a-z0-9])', re.IGNORECASE)
+
+          def contains_internal_details(text):
+              text = unicodedata.normalize('NFKC', text)
+              for _ in range(2):
+                  text = html.unescape(unquote(text))
+              text = re.sub(r'[\u200b-\u200f\u2060\ufeff]', '', text)
+              text = re.sub(r'\\([\-_.:/])', r'\1', text)
+              if any(pattern.search(text) for pattern in PATTERNS):
+                  return True
+              for match in IP_CANDIDATES.finditer(text):
+                  try:
+                      address = ipaddress.ip_address(match[0].split('%', 1)[0].rstrip('.'))
+                  except ValueError:
+                      continue
+                  if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+                      address = address.ipv4_mapped
+                  if any(address.version == network.version and address in network
+                         for network in PRIVATE_NETWORKS):
+                      return True
+              return False
+
+          def main():
+              if os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch':
+                  accepted = ('Anmeldung verbessern. Lokal geprüft.',
+                              'Python 3.15.2 und Docker Compose aktualisieren.')
+                  rejected = ('CVE-2099-12345', 'Commit: abcdef1',
+                              'http://192.168.42.7/', '/home/example/report.txt')
+                  if (any(contains_internal_details(text) for text in accepted)
+                          or not all(contains_internal_details(text) for text in rejected)):
+                      print('::error::Die Beschreibungsprüfung konnte nicht bestätigt werden.')
+                      return 1
+                  print('Selbstprüfung erfolgreich.')
+                  return 0
+              try:
+                  if os.environ.get('GITHUB_EVENT_NAME') != 'pull_request_target':
+                      raise ValueError
+                  with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as stream:
+                      event = json.load(stream)
+                  pr = event['pull_request']
+                  author = pr['user']
+                  login, kind = author['login'], author['type']
+                  if not isinstance(login, str) or not isinstance(kind, str):
+                      raise ValueError
+                  # Upstream bot release notes are not handwritten project notes.
+                  if kind == 'Bot' or login.endswith('[bot]'):
+                      print('Automatisch erstellte Beschreibung erkannt; keine eigene Projektnotiz.')
+                      return 0
+                  title, body = pr['title'], pr.get('body')
+                  if body is None:
+                      body = ''
+                  if not isinstance(title, str) or not isinstance(body, str):
+                      raise ValueError
+                  text = title + '\n' + body
+                  if len(text) > 100000:
+                      raise ValueError
+              except (OSError, ValueError, KeyError, TypeError):
+                  print('::error::Die öffentliche Beschreibung konnte nicht sicher geprüft werden.')
+                  return 1
+              if contains_internal_details(text):
+                  print('::error::Bitte Titel und Beschreibung kurz halten und interne Angaben entfernen.')
+                  return 1
+              print('Öffentliche Beschreibung geprüft.')
+              return 0
+
+          raise SystemExit(main())
+          PY
