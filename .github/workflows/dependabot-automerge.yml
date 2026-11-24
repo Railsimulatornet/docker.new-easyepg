@@ -9,6 +9,9 @@ on:
       - EasyEPG XML and JSON compatibility
       - CodeQL
     types: [completed]
+  schedule:
+    # One daily fallback for a CodeQL check that arrived after the workflow event.
+    - cron: '17 9 * * *'
 
 permissions:
   contents: read
@@ -52,6 +55,13 @@ jobs:
               pip)
                 eligible=true
                 ;;
+              github_actions)
+                files="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100")"
+                if jq -e 'length == 1 and .[0].filename == ".github/workflows/codeql.yml"
+                  and .[0].status == "modified"' <<<"$files" >/dev/null; then
+                  eligible=true
+                fi
+                ;;
             esac
           fi
 
@@ -62,7 +72,53 @@ jobs:
             gh pr edit "$PR_NUMBER"               --repo "$GITHUB_REPOSITORY"               --remove-label "automerge:patch" >/dev/null 2>&1 || true
           fi
 
+  codeql_candidates:
+    if: github.event_name == 'schedule'
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      matrix: ${{ steps.candidates.outputs.matrix }}
+      present: ${{ steps.candidates.outputs.present }}
+    steps:
+      - name: Select a bounded set of open CodeQL candidates
+        id: candidates
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=master&per_page=100")"
+          # An apparently truncated collection must never silently select a subset.
+          jq -e 'type == "array" and length < 100' <<<"$prs" >/dev/null
+          candidates="$(jq -c --arg repo "$GITHUB_REPOSITORY" '[.[]
+            | select(.state == "open" and .draft == false
+                and .user.login == "dependabot[bot]" and .base.ref == "master"
+                and .head.repo.full_name == $repo
+                and (.head.ref | startswith("dependabot/github_actions/"))
+                and any(.labels[]?; .name == "automerge:patch"))
+            | {number, head: .head.sha}]' <<<"$prs")"
+          jq -e 'length <= 5 and all(.[];
+            (.number | type == "number" and . > 0 and floor == .)
+            and (.head | type == "string" and test("^[a-f0-9]{40}$")))' \
+            <<<"$candidates" >/dev/null
+          matrix='[]'
+          while IFS= read -r candidate; do
+            number="$(jq -r '.number' <<<"$candidate")"
+            files="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number/files?per_page=100")"
+            if jq -e 'length == 1 and .[0].filename == ".github/workflows/codeql.yml"
+              and .[0].status == "modified"' <<<"$files" >/dev/null; then
+              matrix="$(jq -c --argjson candidate "$candidate" '. + [$candidate]' <<<"$matrix")"
+            fi
+          done < <(jq -c '.[]' <<<"$candidates")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "present=$(jq -r 'length > 0' <<<"$matrix")" >> "$GITHUB_OUTPUT"
+
   merge:
+    name: merge
+    needs: codeql_candidates
     permissions:
       actions: write
       checks: read
@@ -70,22 +126,50 @@ jobs:
       contents: write
       pull-requests: write
     if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.actor.login == 'dependabot[bot]'
+      always() &&
+      ((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') ||
+       (github.event_name == 'schedule' && needs.codeql_candidates.result == 'success' &&
+        needs.codeql_candidates.outputs.present == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        candidate: ${{ fromJSON(github.event_name == 'schedule' && needs.codeql_candidates.outputs.matrix || '[{"number":0,"head":""}]') }}
     steps:
+      - name: Checkout trusted default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: master
+          persist-credentials: false
+      - name: Test the trusted patch verifier
+        run: python3 -m unittest discover -s .github/scripts -p 'test_dependabot_automerge*.py' -v
       - name: Merge eligible patch update after all required checks pass
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_PR: ${{ matrix.candidate.number }}
+          CANDIDATE_HEAD: ${{ matrix.candidate.head }}
         run: |
           set -Eeuo pipefail
 
-          PR_NUMBER="$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")"
-          if [[ -z "$PR_NUMBER" ]]; then
-            echo "No pull request is associated with this workflow run."
+          case "$GITHUB_EVENT_NAME" in
+            workflow_run)
+              if ! jq -e '.workflow_run.event == "pull_request"' "$GITHUB_EVENT_PATH" >/dev/null; then
+                exit 0
+              fi
+              PR_NUMBER="$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")"
+              TRIGGER_SHA="$(jq -r '.workflow_run.head_sha // empty' "$GITHUB_EVENT_PATH")"
+              ;;
+            schedule)
+              PR_NUMBER="${CANDIDATE_PR:-}"
+              TRIGGER_SHA="${CANDIDATE_HEAD:-}"
+              ;;
+            *) exit 0 ;;
+          esac
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ || ! "$TRIGGER_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "No immutable pull request candidate is associated with this run."
             exit 0
           fi
 
@@ -103,7 +187,6 @@ jobs:
           fi
 
           # Never consume a completed run belonging to an older PR commit.
-          TRIGGER_SHA="$(jq -r '.workflow_run.head_sha // empty' "$GITHUB_EVENT_PATH")"
           HEAD_REPO="$(jq -r '.head.repo.full_name // empty' <<<"$PR_JSON")"
           HEAD_REF="$(jq -r '.head.ref // empty' <<<"$PR_JSON")"
           if [[ "$TRIGGER_SHA" != "$HEAD_SHA" || "$HEAD_REPO" != "$GITHUB_REPOSITORY" ||
@@ -128,23 +211,71 @@ jobs:
             exit 0
           fi
 
-          # Only standalone pip patch updates of requirements.txt are eligible.
-          # GitHub-Actions updates remain manual, even when their CI is green.
+          # Separate the existing pip policy from the narrow CodeQL-only route.
           FILES_JSON="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100")"
-          if ! jq -e 'length == 1
+          PATCH_KIND=pip
+          POSTMERGE_PUBLISH=true
+          if jq -e 'length == 1
             and .[0].filename == "requirements.txt"
             and .[0].status == "modified"
             and .[0].additions == 1
             and .[0].deletions == 1
             and (.[0].patch | type == "string")' <<<"$FILES_JSON" >/dev/null; then
+            # Preserve the existing event and actor restrictions for pip updates.
+            if [[ "$GITHUB_EVENT_NAME" != workflow_run ]] || ! jq -e \
+                '.workflow_run.actor.login == "dependabot[bot]"' "$GITHUB_EVENT_PATH" >/dev/null; then
+              echo "The pip route requires its original Dependabot workflow event."
+              exit 0
+            fi
+            # Keep the established pip content proof unchanged.
+            if ! python3 .github/scripts/patch_policy.py --repository "$GITHUB_REPOSITORY" \
+                --base "$BASE_SHA" --head "$HEAD_SHA"; then
+              echo "Actual dependency changes are not a fully verified patch."
+              exit 0
+            fi
+          elif jq -e 'length == 1 and .[0].filename == ".github/workflows/codeql.yml"
+            and .[0].status == "modified"' <<<"$FILES_JSON" >/dev/null; then
+            PATCH_KIND=codeql
+            POSTMERGE_PUBLISH=false
+            if [[ "$GITHUB_EVENT_NAME" == workflow_run ]] && ! jq -e --arg repo "$GITHUB_REPOSITORY" \
+                '.workflow_run.head_repository.full_name == $repo' "$GITHUB_EVENT_PATH" >/dev/null; then
+              echo "The completed CodeQL candidate run belongs to another repository."
+              exit 0
+            fi
+            if ! python3 .github/scripts/verify_codeql_patch.py --repository "$GITHUB_REPOSITORY" \
+                --base "$BASE_SHA" --head "$HEAD_SHA" --pull-request "$PR_NUMBER"; then
+              echo "The existing CodeQL pins are not a fully verified patch."
+              exit 0
+            fi
+          else
             echo "Unexpected files or non-atomic requirements patch; manual review required."
             exit 0
           fi
 
           CHECKS="$(gh api             -H 'Accept: application/vnd.github+json'             "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?filter=latest&per_page=100")"
 
+          if [[ "$PATCH_KIND" == codeql ]] && ! jq -e --arg head "$HEAD_SHA" '
+            .total_count == (.check_runs | length)
+            and all(.check_runs[]; .head_sha == $head)
+          ' <<<"$CHECKS" >/dev/null; then
+            echo "CodeQL checks are incomplete or belong to another commit."
+            exit 0
+          fi
+
           require_success() {
             local name="$1"
+            if [[ "$PATCH_KIND" == codeql ]]; then
+              local app=15368
+              [[ "$name" != CodeQL ]] || app=57789
+              if ! jq -e --arg name "$name" --arg head "$HEAD_SHA" --argjson app "$app" '
+                .check_runs[] | select(.name == $name and .head_sha == $head and .app.id == $app
+                  and .status == "completed" and .conclusion == "success")
+              ' <<<"$CHECKS" >/dev/null; then
+                echo "Required CodeQL-route check is not successful: $name"
+                exit 0
+              fi
+              return
+            fi
             if ! jq -e --arg name "$name"               '.check_runs[] | select(.name == $name and .status == "completed" and .conclusion == "success")'               <<<"$CHECKS" >/dev/null; then
               echo "Required check is not successful yet: $name"
               exit 0
@@ -159,20 +290,32 @@ jobs:
           require_success "build-arch (Dockerfile.arm64v8, linux/arm64, arm64, arm64)"
           require_success "build-arch (Dockerfile.arm32v7, linux/arm/v7, armv7, arm, v7)"
 
-          require_success "compare-parsers"
+          if [[ "$PATCH_KIND" == pip ]]; then
+            require_success "compare-parsers"
+          else
+            require_success "CodeQL"
+            require_success "description"
+          fi
           require_success "Analyze (actions)"
           require_success "Analyze (python)"
 
-          # The multiarch build and parser compatibility run are mandatory.
+          # The parser compatibility workflow is mandatory for the pip route.
           RUNS="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=100")"
-          if ! jq -e '
+          if [[ "$PATCH_KIND" == codeql ]] && ! jq -e --arg head "$HEAD_SHA" '
+            .total_count == (.workflow_runs | length)
+            and all(.workflow_runs[]; .head_sha == $head and .event == "pull_request")
+          ' <<<"$RUNS" >/dev/null; then
+            echo "CodeQL workflow evidence is incomplete or belongs to another commit."
+            exit 0
+          fi
+          if ! jq -e --arg kind "$PATCH_KIND" '
             ([.workflow_runs[]
               | select(.name == "Build & Push to Docker Hub (multi-arch)"
                        and .status == "completed" and .conclusion == "success")] | length) >= 1
             and
-            ([.workflow_runs[]
+            ($kind != "pip" or ([.workflow_runs[]
               | select(.name == "EasyEPG XML and JSON compatibility"
-                       and .status == "completed" and .conclusion == "success")] | length) >= 1
+                       and .status == "completed" and .conclusion == "success")] | length) >= 1)
             and
             ([.workflow_runs[]
               | select(.name == "CodeQL"
@@ -181,7 +324,7 @@ jobs:
             ([.workflow_runs[]
               | select(.status != "completed" or .conclusion != "success")] | length) == 0
           ' <<<"$RUNS" >/dev/null; then
-            echo "Both required PR workflows must pass; no pending/failed runs allowed."
+            echo "All route-specific PR workflows must pass; no pending/failed runs allowed."
             exit 0
           fi
 
@@ -191,7 +334,7 @@ jobs:
             and all(.check_runs[];
               # Own workflow_run gate jobs may be skipped or in progress
               # while checking the PR. They cannot act as approval checks.
-              (.name == "classify" or .name == "merge")
+              (.name == "classify" or .name == "merge" or .name == "codeql_candidates")
               or
               (.status == "completed"
                and (.conclusion == "success"
@@ -202,7 +345,16 @@ jobs:
             exit 0
           fi
 
-          if ! gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status" \
+          if [[ "$PATCH_KIND" == codeql ]]; then
+            LEGACY="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100")"
+            if ! jq -e --arg head "$HEAD_SHA" '
+              .sha == $head and .total_count == (.statuses | length)
+              and all(.statuses[]; .state == "success")
+            ' <<<"$LEGACY" >/dev/null; then
+              echo "CodeQL legacy statuses are incomplete, mismatched or not successful."
+              exit 0
+            fi
+          elif ! gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status" \
               --jq '[.statuses[] | select(.state != "success")] | length == 0' |
               grep -Fxq true; then
             echo "Unsuccessful legacy commit status."
@@ -210,6 +362,17 @@ jobs:
           fi
 
           # The merge endpoint compares the verified head SHA atomically.
+          if [[ "$PATCH_KIND" == codeql ]]; then
+            LATEST_PR="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
+            if ! jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" --arg repo "$GITHUB_REPOSITORY" '
+              .state == "open" and .draft == false and .user.login == "dependabot[bot]"
+              and .head.sha == $head and .base.sha == $base and .base.ref == "master"
+              and .head.repo.full_name == $repo and (.head.ref | startswith("dependabot/"))
+            ' <<<"$LATEST_PR" >/dev/null; then
+              echo "CodeQL PR identity changed during verification."
+              exit 0
+            fi
+          fi
           CURRENT_MAIN="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha')"
           [[ "$CURRENT_MAIN" == "$MAIN_SHA" ]] || {
             echo "master advanced during verification."
@@ -235,6 +398,10 @@ jobs:
           # GITHUB_TOKEN-generated merges do not fire push workflows. An explicit
           # workflow_dispatch is permitted and must be pinned to the merged SHA.
           gh workflow run dockerhub.yml --repo "$GITHUB_REPOSITORY" \
-            --ref master -f publish=true -f expected_sha="$MERGE_SHA"
-          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref master
+            --ref master -f publish="$POSTMERGE_PUBLISH" -f expected_sha="$MERGE_SHA"
+          if [[ "$PATCH_KIND" == codeql ]]; then
+            gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref master -f expected_sha="$MERGE_SHA"
+          else
+            gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref master
+          fi
           echo "Requested post-merge Docker build and CodeQL scan for PR #$PR_NUMBER at commit $MERGE_SHA."
