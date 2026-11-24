@@ -76,6 +76,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Checkout trusted default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: master
+          persist-credentials: false
+      - name: Test the trusted patch verifier
+        run: python3 -m unittest discover -s .github/scripts -p 'test_dependabot_automerge*.py' -v
       - name: Merge eligible patch update after all required checks pass
         shell: bash
         env:
@@ -138,6 +145,13 @@ jobs:
             and .[0].deletions == 1
             and (.[0].patch | type == "string")' <<<"$FILES_JSON" >/dev/null; then
             echo "Unexpected files or non-atomic requirements patch; manual review required."
+            exit 0
+          fi
+
+          # Labels select candidates; the exact base/head manifests prove a patch.
+          if ! python3 .github/scripts/patch_policy.py --repository "$GITHUB_REPOSITORY" \
+              --base "$BASE_SHA" --head "$HEAD_SHA"; then
+            echo "Actual dependency changes are not a fully verified patch."
             exit 0
           fi
 
