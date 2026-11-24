@@ -254,30 +254,23 @@ jobs:
 
           CHECKS="$(gh api             -H 'Accept: application/vnd.github+json'             "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?filter=latest&per_page=100")"
 
-          if [[ "$PATCH_KIND" == codeql ]] && ! jq -e --arg head "$HEAD_SHA" '
+          if ! jq -e --arg head "$HEAD_SHA" '
             .total_count == (.check_runs | length)
             and all(.check_runs[]; .head_sha == $head)
           ' <<<"$CHECKS" >/dev/null; then
-            echo "CodeQL checks are incomplete or belong to another commit."
+            echo "Checks are incomplete or belong to another commit."
             exit 0
           fi
 
           require_success() {
             local name="$1"
-            if [[ "$PATCH_KIND" == codeql ]]; then
-              local app=15368
-              [[ "$name" != CodeQL ]] || app=57789
-              if ! jq -e --arg name "$name" --arg head "$HEAD_SHA" --argjson app "$app" '
-                .check_runs[] | select(.name == $name and .head_sha == $head and .app.id == $app
-                  and .status == "completed" and .conclusion == "success")
-              ' <<<"$CHECKS" >/dev/null; then
-                echo "Required CodeQL-route check is not successful: $name"
-                exit 0
-              fi
-              return
-            fi
-            if ! jq -e --arg name "$name"               '.check_runs[] | select(.name == $name and .status == "completed" and .conclusion == "success")'               <<<"$CHECKS" >/dev/null; then
-              echo "Required check is not successful yet: $name"
+            local app=15368
+            [[ "$name" != CodeQL ]] || app=57789
+            if ! jq -e --arg name "$name" --arg head "$HEAD_SHA" --argjson app "$app" '
+              .check_runs[] | select(.name == $name and .head_sha == $head and .app.id == $app
+                and .status == "completed" and .conclusion == "success")
+            ' <<<"$CHECKS" >/dev/null; then
+              echo "Required check is not successful: $name"
               exit 0
             fi
           }
@@ -292,20 +285,19 @@ jobs:
 
           if [[ "$PATCH_KIND" == pip ]]; then
             require_success "compare-parsers"
-          else
-            require_success "CodeQL"
-            require_success "description"
           fi
+          require_success "CodeQL"
+          require_success "description"
           require_success "Analyze (actions)"
           require_success "Analyze (python)"
 
           # The parser compatibility workflow is mandatory for the pip route.
           RUNS="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=100")"
-          if [[ "$PATCH_KIND" == codeql ]] && ! jq -e --arg head "$HEAD_SHA" '
+          if ! jq -e --arg head "$HEAD_SHA" '
             .total_count == (.workflow_runs | length)
             and all(.workflow_runs[]; .head_sha == $head and .event == "pull_request")
           ' <<<"$RUNS" >/dev/null; then
-            echo "CodeQL workflow evidence is incomplete or belongs to another commit."
+            echo "Workflow evidence is incomplete or belongs to another commit."
             exit 0
           fi
           if ! jq -e --arg kind "$PATCH_KIND" '
@@ -345,33 +337,24 @@ jobs:
             exit 0
           fi
 
-          if [[ "$PATCH_KIND" == codeql ]]; then
-            LEGACY="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100")"
-            if ! jq -e --arg head "$HEAD_SHA" '
-              .sha == $head and .total_count == (.statuses | length)
-              and all(.statuses[]; .state == "success")
-            ' <<<"$LEGACY" >/dev/null; then
-              echo "CodeQL legacy statuses are incomplete, mismatched or not successful."
-              exit 0
-            fi
-          elif ! gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status" \
-              --jq '[.statuses[] | select(.state != "success")] | length == 0' |
-              grep -Fxq true; then
-            echo "Unsuccessful legacy commit status."
+          LEGACY="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100")"
+          if ! jq -e --arg head "$HEAD_SHA" '
+            .sha == $head and .total_count == (.statuses | length)
+            and all(.statuses[]; .state == "success")
+          ' <<<"$LEGACY" >/dev/null; then
+            echo "Legacy statuses are incomplete, mismatched or not successful."
             exit 0
           fi
 
           # The merge endpoint compares the verified head SHA atomically.
-          if [[ "$PATCH_KIND" == codeql ]]; then
-            LATEST_PR="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
-            if ! jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" --arg repo "$GITHUB_REPOSITORY" '
-              .state == "open" and .draft == false and .user.login == "dependabot[bot]"
-              and .head.sha == $head and .base.sha == $base and .base.ref == "master"
-              and .head.repo.full_name == $repo and (.head.ref | startswith("dependabot/"))
-            ' <<<"$LATEST_PR" >/dev/null; then
-              echo "CodeQL PR identity changed during verification."
-              exit 0
-            fi
+          LATEST_PR="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
+          if ! jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" --arg repo "$GITHUB_REPOSITORY" '
+            .state == "open" and .draft == false and .user.login == "dependabot[bot]"
+            and .head.sha == $head and .base.sha == $base and .base.ref == "master"
+            and .head.repo.full_name == $repo and (.head.ref | startswith("dependabot/"))
+          ' <<<"$LATEST_PR" >/dev/null; then
+            echo "PR identity changed during verification."
+            exit 0
           fi
           CURRENT_MAIN="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha')"
           [[ "$CURRENT_MAIN" == "$MAIN_SHA" ]] || {
@@ -399,9 +382,6 @@ jobs:
           # workflow_dispatch is permitted and must be pinned to the merged SHA.
           gh workflow run dockerhub.yml --repo "$GITHUB_REPOSITORY" \
             --ref master -f publish="$POSTMERGE_PUBLISH" -f expected_sha="$MERGE_SHA"
-          if [[ "$PATCH_KIND" == codeql ]]; then
-            gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref master -f expected_sha="$MERGE_SHA"
-          else
-            gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref master
-          fi
+          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref master -f expected_sha="$MERGE_SHA"
           echo "Requested post-merge Docker build and CodeQL scan for PR #$PR_NUMBER at commit $MERGE_SHA."
+

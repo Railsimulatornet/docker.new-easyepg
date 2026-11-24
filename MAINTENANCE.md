@@ -21,6 +21,8 @@ Behebbare HIGH-/CRITICAL-Funde oder unvollständige Scans verhindern die Veröff
 Pull Requests sowie reine Dokumentations-/Workflow-Änderungen starten Tests, veröffentlichen aber kein neues Image. Änderungen an Dockerfiles, `requirements.txt` oder Startskripten auf `master` sowie der Wochenjob veröffentlichen nach bestandenen Prüfungen. Bei einem manuellen Lauf ist die Veröffentlichung standardmäßig deaktiviert und muss mit `publish` ausdrücklich ausgewählt werden. Der Workflow legt keine GitHub-Releases an.
 
 
+Automatisch übernommen werden ausschließlich verifizierte Patch-Änderungen an den Python-Paketen oder den bestehenden CodeQL-Aktionen. Alle erforderlichen Prüfungen müssen zur aktuellen PR-Fassung gehören und erfolgreich sein. Nach der Übernahme werden Image-Prüfung und CodeQL eindeutig auf die übernommene Änderung festgelegt. Reine CodeQL-Updates veröffentlichen kein Image; Minor- und Major-Updates bleiben prüfpflichtig.
+
 ### Lokale Betriebsprüfung
 
 Alle drei Image-Architekturen prüfen alle 30 Sekunden die vorhandene, lesende EasyEPG-API `http://127.0.0.1:4000/api/grabber-status`. HTTP-Fehler, eine ungültige Antwort oder fehlende Zustandswerte machen die Prüfung erfolglos. Der Aufruf lautet `/opt/venv/bin/python /usr/local/bin/easyepg.healthcheck.py`; er startet keinen EPG-Abruf und kontaktiert keinen externen Anbieter. Ein bereits aktiver Abruf gilt ebenfalls als betriebsbereit. Die Prüfung bestätigt die lokale Anwendung, nicht die Aktualität sämtlicher Programmdaten oder die Anmeldung bei einem Anbieter.
@@ -35,7 +37,7 @@ Die Python-Pakete einschließlich ihrer Unterabhängigkeiten sind in `requiremen
 
 Die Offline-Laufzeittests prüfen zusätzlich echte HTTP-Anfragen über die lokale Loopback-Schnittstelle: GET/POST, Unicode, JSON, Cookies, Weiterleitungen, gzip und Brotli sowie HTTP- und JSON-Fehler. Sie laufen mit der installierten curl-cffi-Bibliothek und Firefox-Imitation auf allen drei Plattformen. Externe Anbieteranmeldungen und deren TLS-/Anti-Bot-Verhalten werden dadurch nicht geprüft.
 
-Dependabot darf weiterhin neue Versionen per Pull Request vorschlagen. Ein neuer Patch wird erst nach den bestehenden Sicherheits- und Kompatibilitätsprüfungen freigegeben; Minor-/Major-Versionen benötigen eine manuelle Prüfung. **Wichtig:** Die Basis `python:3.12-slim`, Debian-Pakete und der beim Start unabhängig aktualisierte EasyEPG-Quellcode sind dadurch noch nicht unveränderlich. Diese Änderung sichert die Python-Paketversionen, nicht das gesamte Image auf Byte-Ebene.
+Dependabot darf weiterhin neue Versionen per Pull Request vorschlagen. Ein neuer Patch wird erst nach den bestehenden Sicherheits- und Kompatibilitätsprüfungen freigegeben; Minor-/Major-Versionen benötigen eine manuelle Prüfung. **Wichtig:** Die Basis `python:3.15-slim`, Debian-Pakete und der beim Start unabhängig aktualisierte EasyEPG-Quellcode sind dadurch noch nicht unveränderlich. Diese Änderung sichert die Python-Paketversionen, nicht das gesamte Image auf Byte-Ebene.
 
 
 ## English
@@ -52,6 +54,8 @@ The weekly workflow builds and checks all three platforms before publishing thei
 
 PRs and documentation/workflow-only changes run tests without publishing. Runtime-source changes on `master` and scheduled runs publish after successful checks. Manual runs default to tests only; publication requires opting in with `publish`. This workflow does not create GitHub releases.
 
+Automatic merging is limited to verified patches of Python packages or existing CodeQL actions. Every required check must pass for the current PR revision. Image validation and CodeQL after merging are bound to the merged change. CodeQL-only updates do not publish an image; minor and major updates require review.
+
 ### Approved Python dependency versions
 
 Every Python runtime package (including indirect dependencies) is pinned to an exact version in `requirements.txt`. Scheduled builds therefore cannot silently adopt a newer minor or major Python package. The current list includes `pytz 2026.6` and `curl-cffi 0.17.0`. Builds install with `--no-deps`, perform `pip check`, and reject any missing, unexpected or version-mismatched runtime package. Temporary build tools are also version-pinned and removed before runtime.
@@ -59,3 +63,4 @@ Every Python runtime package (including indirect dependencies) is pinned to an e
 Offline runtime checks also exercise real loopback HTTP requests with the installed curl-cffi library and Firefox impersonation on all three platforms: GET/POST, Unicode, JSON, cookies, redirects, gzip, Brotli and error handling. These tests do not verify external provider logins or their TLS/anti-bot behavior.
 
 Dependabot still proposes updates through pull requests; existing CI and auto-merge gates remain in force. Base-image and Debian packages, and upstream EasyEPG application code loaded at startup, are **not** pinned by this change. It guarantees the listed Python runtime versions, not byte-for-byte image reproducibility.
+
