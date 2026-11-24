@@ -94,14 +94,14 @@ elif '/git/ref/heads/master' in route:
 elif '/git/ref/tags/' in route:
     tag = route.rsplit('/', 1)[1]
     value = {'object': {'type': 'commit', 'sha': data['tags'][tag]}}
-elif '/contents/.github/workflows/codeql.yml?ref=' in route:
+elif '/contents/.github/workflows/codeql.yml?ref=' in route or '/contents/requirements.txt?ref=' in route:
     content = data['after' if route.endswith(head) else 'before'].encode()
     value = {'encoding': 'base64', 'content': base64.b64encode(content).decode(), 'size': len(content)}
 elif '/pulls?' in route:
     value = data['open_prs']
 elif route.endswith('/pulls/7'):
     n = count('pr_reads')
-    value = data.get('final_pr', data['pr']) if n >= 3 else data['pr']
+    value = data.get('final_pr', data['pr']) if n >= data.get('final_pr_after', 3) else data['pr']
 elif '/compare/' in route:
     value = {'behind_by': data['behind_by'], 'ahead_by': 1}
 elif '/labels' in route:
@@ -427,3 +427,4 @@ class ExactPostmergeCodeqlSource(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
