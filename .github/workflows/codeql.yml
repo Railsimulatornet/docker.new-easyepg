@@ -10,6 +10,11 @@ on:
   schedule:
     - cron: '41 5 * * 1'
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Require this exact commit for an automated post-merge check
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -27,9 +32,21 @@ jobs:
       matrix:
         language: [actions, python]
     steps:
+      - name: Verify requested source commit
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -Eeuo pipefail
+          if [[ -n "$EXPECTED_SHA" ]]; then
+            [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+            [[ "$GITHUB_SHA" == "$EXPECTED_SHA" ]]
+          fi
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Initialize CodeQL
         uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
