@@ -79,9 +79,11 @@ class ActualMergeStep(unittest.TestCase):
             (path / 'before.txt').write_text('demo==1.2.3\n')
             (path / 'after.txt').write_text(after)
             (path / 'event.json').write_text(json.dumps({'workflow_run': {
+                'event': 'pull_request', 'actor': {'login': 'dependabot[bot]'},
                 'head_sha': 'a' * 40, 'pull_requests': [{'number': 7}]}}))
             env = {'PATH': str(path) + os.pathsep + '/usr/bin:/bin',
                    'GITHUB_EVENT_PATH': str(path / 'event.json'),
+                   'GITHUB_EVENT_NAME': 'workflow_run',
                    'GITHUB_REPOSITORY': 'Railsimulatornet/docker.new-easyepg',
                    'PATCH_TEST_DIR': str(path), 'PATCH_TEST_JQ': shutil.which('jq') or ''}
             self.assertTrue(env['PATCH_TEST_JQ'], 'The workflow requires jq')
@@ -94,6 +96,10 @@ class ActualMergeStep(unittest.TestCase):
     def test_exact_patch_reaches_only_the_simulated_merge(self):
         calls = self.run_gate('demo==1.2.4\n')
         self.assertEqual(sum('-X' in call and call[call.index('-X') + 1] == 'PUT' for call in calls), 1)
+        dispatches = [call for call in calls if call[0] == 'workflow']
+        self.assertEqual(len(dispatches), 2)
+        self.assertIn('publish=true', dispatches[0])
+        self.assertFalse(any(argument.startswith('expected_sha=') for argument in dispatches[1]))
 
     def test_label_or_diff_cannot_override_actual_contents(self):
         for after in ['demo==1.3.0\n', 'demo==2.0.0\n', 'demo==1.2.4rc1\n',
